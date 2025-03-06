@@ -108,27 +108,19 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
             *status = 2;
         },
         "MU" => {
-            let current_position = motor_vertical.current_position()? as f32;
-            let move_to = current_position + 1.0;
-            motor_vertical.set_target_position(move_to as i32)?;
+            motor_vertical.set_target_velocity(SPEED_DEFAULT_VERTICAL)?;
             *status = 2;
         },
         "MD" => {
-            let current_position = motor_vertical.current_position()? as f32;
-            let move_to = current_position - 1.0;
-            motor_vertical.set_target_position(move_to as i32)?;
+            motor_vertical.set_target_velocity(-SPEED_DEFAULT_VERTICAL)?;
             *status = 2;
         },
         "ML" => {
-            let current_position = motor_horizontal.current_position()? as f32;
-            let move_to = current_position + 1.0; //TODO: check if positive v is ccw or cw
-            motor_horizontal.set_target_position(move_to as i32)?;
+            motor_horizontal.set_target_velocity(SPEED_DEFAULT_HORIZONTAL)?; //TODO: check if positive v is ccw or cw
             *status = 2;
         },
         "MR" => {
-            let current_position = motor_horizontal.current_position()? as f32;
-            let move_to = current_position - 1.0; //TODO: check if positive v is ccw or cw
-            motor_horizontal.set_target_position(move_to as i32)?;
+            motor_horizontal.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL)?; //TODO: check if positive v is ccw or cw
             *status = 2;
         },
         "SA" => {
