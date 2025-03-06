@@ -130,6 +130,7 @@ async fn main(spawner: Spawner) {
     info!("Motors set up!!");
 
     let mut is_calibrated = false;
+    let mut status: i32 = 1;
 
     let mut buffer = [0; 1];
     let mut command_string = String::new();
@@ -157,23 +158,25 @@ async fn main(spawner: Spawner) {
             continue;
         }
 
-        if buffer[0] == b'\x1B' {
-            command_string.clear();
-            match parse_command(
-                &mut motor_vertical,
-                &mut motor_horizontal,
-                &mut accelerometer,
-                "HALT ",
-                &mut is_calibrated,
-            )
-            .await
-            {
-                Ok(_) => print!("OK SOFTWARE E-STOP (ESC RECIEVED)\n"),
-                Err(e) => print!("ERR: {:?}, {}\n", e, e),
-            }
-            continue;
-        }
-
+        /* if buffer[0] == b'\x1B' {
+        //     command_string.clear();
+        //     match parse_command(
+        //         &mut motor_vertical,
+        //         &mut motor_horizontal,
+        //         &mut accelerometer,
+        //         "HALT ",
+        //         &mut is_calibrated,
+        //         &mut status,
+        //     )
+        //     .await
+        //     {
+        //         Ok(_) => print!("OK SOFTWARE E-STOP (ESC RECIEVED)\n"),
+        //         Err(e) => print!("ERR: {:?}, {}\n", e, e),
+        //     }
+        //     continue;
+        // }
+        */
+        
         if buffer[0] == b'\r' || buffer[0] == b'\n' {
             println!();
             command_string += " ";
@@ -184,6 +187,7 @@ async fn main(spawner: Spawner) {
                 &mut accelerometer,
                 &command_string,
                 &mut is_calibrated,
+                &mut status,
             )
             .await
             {

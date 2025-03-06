@@ -36,6 +36,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
     input: &str,
     is_calibrated: &mut bool,
+    status: &mut i32,
 ) -> Result<String, ParseErr> {
     let input = input.to_ascii_uppercase();
     let mut arguments = input.split_whitespace().peekable();
@@ -45,20 +46,53 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
     }
 
     match arguments.next().ok_or(ParseErr::Empty)? {
-        "DVER" => {
+        "VL" => {
+            let target_velocity = match arguments.next().ok_or(ParseErr::TooFewArguments)?.parse::<i32>() { //TODO: not in the correct units, needs to be in mdeg/s
+                Ok(n) => n,
+                _ => return Err(ParseErr::InvalidNumber),
+            };
+            motor_horizontal.set_target_velocity(target_velocity)?; //TODO: check if positive v is ccw or cw
+            *status = 2;
+        },
+        "VR" => {
+            let target_velocity = match arguments.next().ok_or(ParseErr::TooFewArguments)?.parse::<i32>() {
+                Ok(n) => n,
+                _ => return Err(ParseErr::InvalidNumber),
+            };
+            motor_horizontal.set_target_velocity(-target_velocity)?; //TODO: check if positive v is ccw or cw
+            *status = 2;
+        },
+        "VU" => {
+            let target_velocity = match arguments.next().ok_or(ParseErr::TooFewArguments)?.parse::<i32>() {
+                Ok(n) => n,
+                _ => return Err(ParseErr::InvalidNumber),
+            };
+            motor_vertical.set_target_velocity(target_velocity)?; //TODO: check if positive v is up or down
+            *status = 2;
+        },
+        "VD" => {
+            let target_velocity = match arguments.next().ok_or(ParseErr::TooFewArguments)?.parse::<i32>() {
+                Ok(n) => n,
+                _ => return Err(ParseErr::InvalidNumber),
+            };
+            motor_vertical.set_target_velocity(-target_velocity)?; //TODO: check if positive v is up or down
+            *status = 2;
+        },
+        "EL" => {
             let target_pos = match arguments
                 .next()
                 .ok_or(ParseErr::TooFewArguments)?
                 .parse::<f32>()
             {
-                Ok(n) => n.clamp(0.0, 90.0),
+                Ok(n) => n.clamp(0.0, 90.0), //TODO: need to not clanp because if the software doesnt get position it might think its at a different position that actual
                 _ => return Err(ParseErr::InvalidNumber),
             };
 
             motor_vertical
                 .set_target_position((target_pos * STEPS_PER_DEGREE_VERTICAL as f32) as i32)?;
+            *status = 2;
         }
-        "DHOR" => {
+        "AZ" => {
             let target_pos = match arguments
                 .next()
                 .ok_or(ParseErr::TooFewArguments)?
@@ -71,129 +105,135 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 * STEPS_PER_DEGREE_HORIZONTAL as f32;
             let move_to = motor_horizontal.current_position()? as f32 + angle_steps;
             motor_horizontal.set_target_position(move_to as i32)?;
-        }
-        "CALV" => match arguments.next() {
-            Some("SET") => {
-                motor_vertical.halt_and_set_position(0)?;
-                *is_calibrated = true;
-            }
-            _ => {
-                calibrate_vertical(motor_vertical, accel).await;
-                *is_calibrated = true;
-            }
+            *status = 2;
         },
-        "CALH" => {
-            motor_horizontal.halt_and_set_position(0)?;
-        }
-        "MOVV" => {
-            let steps_to_move = match arguments
-                .next()
-                .ok_or(ParseErr::TooFewArguments)?
-                .parse::<f32>()
-            {
-                Ok(n) => n,
-                Err(_) => Err(ParseErr::TooFewArguments)?,
-            };
+        "MU" => {
             let current_position = motor_vertical.current_position()? as f32;
-            let move_to = current_position + steps_to_move;
+            let move_to = current_position + 1.0;
             motor_vertical.set_target_position(move_to as i32)?;
-        }
-        "MOVH" => {
-            let steps_to_move = match arguments
-                .next()
-                .ok_or(ParseErr::TooFewArguments)?
-                .parse::<f32>()
-            {
-                Ok(n) => n,
-                Err(_) => Err(ParseErr::TooFewArguments)?,
-            };
-            let current_position = motor_horizontal.current_position()? as f32;
-            let move_to = current_position - steps_to_move;
-            motor_horizontal.set_target_position(move_to as i32)?;
-        }
-        "GETP" => {
-            let vertical_position: f32 =
-                motor_vertical.current_position()? as f32 / STEPS_PER_DEGREE_VERTICAL as f32;
-            let mut horizontal_position: f32 =
-                motor_horizontal.current_position()? as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
-            while horizontal_position > 180.0 {
-                horizontal_position -= 360.0;
-            }
-            while horizontal_position < -180.0 {
-                horizontal_position += 360.0;
-            }
-            return Ok(format!("{} {}", vertical_position, horizontal_position));
-        }
-        "INFO" => {
-            let command_list = [
-                "DVER INT",
-                "DHOR INT",
-                "CALV {SET}",
-                "CALH",
-                "MOVV INT",
-                "MOVH INT",
-                "GETP",
-                "SSPD INT {VER INT} {HOR INT} {RST}",
-                "GSPD",
-                "HALT",
-            ];
-
-            for command in command_list {
-                println!("  {}", command);
-            }
-        }
-        "SSPD" => match arguments.next() {
-            Some("VER") => {
-                let new_speed = match arguments
-                    .next()
-                    .ok_or(ParseErr::TooFewArguments)?
-                    .parse::<f32>()
-                {
-                    Ok(n) => n,
-                    Err(_) => Err(ParseErr::TooFewArguments)?,
-                };
-                motor_vertical
-                    .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32)?;
-            }
-            Some("HOR") => {
-                let new_speed = match arguments
-                    .next()
-                    .ok_or(ParseErr::TooFewArguments)?
-                    .parse::<f32>()
-                {
-                    Ok(n) => n,
-                    Err(_) => Err(ParseErr::TooFewArguments)?,
-                };
-                motor_horizontal
-                    .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32)?;
-            }
-            Some("RST") => {
-                motor_vertical.set_max_speed(SPEED_DEFAULT_VERTICAL as u32)?;
-                motor_horizontal.set_max_speed(SPEED_DEFAULT_HORIZONTAL as u32)?;
-            }
-            Some(int) => {
-                let new_speed = match int.parse::<f32>() {
-                    Ok(n) => n,
-                    Err(_) => Err(ParseErr::TooFewArguments)?,
-                };
-                motor_vertical
-                    .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32)?;
-                motor_horizontal
-                    .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32)?;
-            }
-            _ => return Err(ParseErr::InvalidArgument),
+            *status = 2;
         },
-        "GSPD" => {
-            return Ok(format!(
-                "{} {}",
-                motor_vertical.max_speed()?,
-                motor_horizontal.max_speed()?
-            ));
-        }
-        "HALT" => {
-            motor_vertical.halt_and_hold()?;
+        "MD" => {
+            let current_position = motor_vertical.current_position()? as f32;
+            let move_to = current_position - 1.0;
+            motor_vertical.set_target_position(move_to as i32)?;
+            *status = 2;
+        },
+        "ML" => {
+            let current_position = motor_horizontal.current_position()? as f32;
+            let move_to = current_position + 1.0; //TODO: check if positive v is ccw or cw
+            motor_horizontal.set_target_position(move_to as i32)?;
+            *status = 2;
+        },
+        "MR" => {
+            let current_position = motor_horizontal.current_position()? as f32;
+            let move_to = current_position - 1.0; //TODO: check if positive v is ccw or cw
+            motor_horizontal.set_target_position(move_to as i32)?;
+            *status = 2;
+        },
+        "SA" => {
             motor_horizontal.halt_and_hold()?
+        },
+        "SE" => {
+            motor_vertical.halt_and_hold()?
         }
+        // "CALV" => match arguments.next() {
+        //     Some("SET") => {
+        //         motor_vertical.halt_and_set_position(0)?;
+        //         *is_calibrated = true;
+        //     }
+        //     _ => {
+        //         calibrate_vertical(motor_vertical, accel).await;
+        //         *is_calibrated = true;
+        //     }
+        // },
+        // "CALH" => {
+        //     motor_horizontal.halt_and_set_position(0)?;
+        // },
+        // "GETP" => {
+        //     let vertical_position: f32 =
+        //         motor_vertical.current_position()? as f32 / STEPS_PER_DEGREE_VERTICAL as f32;
+        //     let mut horizontal_position: f32 =
+        //         motor_horizontal.current_position()? as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
+        //     while horizontal_position > 180.0 {
+        //         horizontal_position -= 360.0;
+        //     }
+        //     while horizontal_position < -180.0 {
+        //         horizontal_position += 360.0;
+        //     }
+        //     return Ok(format!("{} {}", vertical_position, horizontal_position));
+        // }
+        // "INFO" => {
+        //     let command_list = [
+        //         "DVER INT",
+        //         "DHOR INT",
+        //         "CALV {SET}",
+        //         "CALH",
+        //         "MOVV INT",
+        //         "MOVH INT",
+        //         "GETP",
+        //         "SSPD INT {VER INT} {HOR INT} {RST}",
+        //         "GSPD",
+        //         "HALT",
+        //     ];
+        // 
+        //     for command in command_list {
+        //         println!("  {}", command);
+        //     }
+        // }
+        // "SSPD" => match arguments.next() {
+        //     Some("VER") => {
+        //         let new_speed = match arguments
+        //             .next()
+        //             .ok_or(ParseErr::TooFewArguments)?
+        //             .parse::<f32>()
+        //         {
+        //             Ok(n) => n,
+        //             Err(_) => Err(ParseErr::TooFewArguments)?,
+        //         };
+        //         motor_vertical
+        //             .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32)?;
+        //     }
+        //     Some("HOR") => {
+        //         let new_speed = match arguments
+        //             .next()
+        //             .ok_or(ParseErr::TooFewArguments)?
+        //             .parse::<f32>()
+        //         {
+        //             Ok(n) => n,
+        //             Err(_) => Err(ParseErr::TooFewArguments)?,
+        //         };
+        //         motor_horizontal
+        //             .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32)?;
+        //     }
+        //     Some("RST") => {
+        //         motor_vertical.set_max_speed(SPEED_DEFAULT_VERTICAL as u32)?;
+        //         motor_horizontal.set_max_speed(SPEED_DEFAULT_HORIZONTAL as u32)?;
+        //     }
+        //     Some(int) => {
+        //         let new_speed = match int.parse::<f32>() {
+        //             Ok(n) => n,
+        //             Err(_) => Err(ParseErr::TooFewArguments)?,
+        //         };
+        //         motor_vertical
+        //             .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32)?;
+        //         motor_horizontal
+        //             .set_max_speed(new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32)?;
+        //     }
+        //     _ => return Err(ParseErr::InvalidArgument),
+        // },
+        // "GSPD" => {
+        //     return Ok(format!(
+        //         "{} {}",
+        //         motor_vertical.max_speed()?,
+        //         motor_horizontal.max_speed()?
+        //     ));
+        // },
+        
+        // "HALT" => {
+        //     motor_vertical.halt_and_hold()?;
+        //     motor_horizontal.halt_and_hold()?
+        // }
         _ => Err(ParseErr::InvalidCommand)?,
     }
     Ok("".to_string())
