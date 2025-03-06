@@ -677,7 +677,7 @@ dependencies = [
 [[package]]
 name = "mma8x5x"
 version = "0.1.1"
-source = "git+https://github.com/G2-Games/mma8x5x-rs.git#1af9c3734f4e358eeaa391f5c86a2cb0119f1e68"
+source = "git+https://github.com/eldruin/mma8x5x-rs.git#40342c348ed68f7eabe8b5c9e5e812f2ec149ed3"
 dependencies = [
  "embedded-hal 1.0.0",
 ]
