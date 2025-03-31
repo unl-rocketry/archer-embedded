@@ -26,6 +26,8 @@ pub enum ParseErr {
     InternalError(#[from] pololu_tic::TicHandlerError),
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
+    #[error("Command Locked")]
+    CommandLockoutError
 }
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
@@ -33,7 +35,7 @@ const BLACKLIST: &[&str] = &["DVER", "DHOR"];
 pub async fn parse_command<I: embedded_hal::i2c::I2c>(
     motor_vertical: &mut TicI2C<I>,
     motor_horizontal: &mut TicI2C<I>,
-    accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
+    accel: &mut Option<Mma8x5x<I, Mma8451, mode::Active>>,
     input: &str,
     is_calibrated: &mut bool,
 ) -> Result<String, ParseErr> {
@@ -78,8 +80,15 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 *is_calibrated = true;
             }
             _ => {
-                calibrate_vertical(motor_vertical, accel).await;
-                *is_calibrated = true;
+                match accel {
+                    Some(accel) => {
+                        calibrate_vertical(motor_vertical, accel).await;
+                        *is_calibrated = true
+                    }
+                    None => {
+                        return Err(ParseErr::InvalidCommand)
+                    }
+                }
             }
         },
         "CALH" => {

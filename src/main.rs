@@ -18,6 +18,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use log::{error, info};
 use mma8x5x::{ic::Mma8451, mode, GScale, Mma8x5x, OutputDataRate, PowerMode};
+use mma8x5x::mode::Standby;
 use pololu_tic::{base::TicBase, TicHandlerError, TicI2C, TicProduct, TicStepMode};
 
 extern crate alloc;
@@ -91,21 +92,8 @@ async fn main(spawner: Spawner) {
         pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
     let mut motor_vertical =
         pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
-
-    let mut accelerometer = Mma8x5x::new_mma8451(
-        RefCellDevice::new(&i2c_bus),
-        mma8x5x::SlaveAddr::Alternative(true),
-    );
-    let _ = accelerometer.disable_auto_sleep();
-    let _ = accelerometer.set_scale(GScale::G2);
-    let _ = accelerometer.set_data_rate(OutputDataRate::Hz50);
-    let _ = accelerometer.set_wake_power_mode(PowerMode::HighResolution);
-    let _ = accelerometer.set_read_mode(mma8x5x::ReadMode::Normal);
-    let _ = accelerometer.set_offset_correction(
-        ACC_OFFSET_X as i8,
-        ACC_OFFSET_Y as i8,
-        ACC_OFFSET_Z as i8,
-    );
+    
+    let accelerometer = initialize_accelerometer(i2c_bus, ACC_OFFSET_X, ACC_OFFSET_Y, ACC_OFFSET_Z);
 
     let (tx_pin, rx_pin) = (peripherals.GPIO1, peripherals.GPIO3);
     let config = esp_hal::uart::Config::default().with_rx_fifo_full_threshold(64);
@@ -118,11 +106,7 @@ async fn main(spawner: Spawner) {
 
     uart0.set_at_cmd(esp_hal::uart::AtCmdConfig::default().with_cmd_char(0x04));
 
-    let mut accelerometer = accelerometer
-        .into_active()
-        .ok()
-        .expect("Accelerometer could not be found!");
-    info!("MMA8451 set up!!");
+    let mut accelerometer = setup_accel(accelerometer);
 
     setup_motor(&mut motor_horizontal, MotorAxis::Horizontal)
         .expect("Horizontal motor setup error");
@@ -251,6 +235,14 @@ fn setup_motor<I: embedded_hal::i2c::I2c>(
     Ok(())
 }
 
+fn setup_accel<I: embedded_hal::i2c::I2c>(accelerometer: Mma8x5x<RefCellDevice<T>, Mma8451, Standby>) -> Option<Mma8x5x<RefCellDevice<T>, Mma8451, Active>> {
+    let accelerometer = accelerometer
+        .into_active()
+        .ok();
+    info!("MMA8451 set up!!");
+    accelerometer
+}
+
 async fn calibrate_vertical<I: embedded_hal::i2c::I2c>(
     motor: &mut TicI2C<I>,
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
@@ -322,4 +314,23 @@ fn get_relative_angle<I: embedded_hal::i2c::I2c>(motor: &mut TicI2C<I>) -> f32 {
         curr_angle += 360.0;
     }
     curr_angle
+}
+
+fn initialize_accelerometer(i2c_bus: RefCell<I2c<Async>>, acc_offset_x: i16, acc_offset_y: i16, acc_offset_z: i16) -> Mma8x5x<RefCellDevice<T>, Mma8451, Standby> {
+    let mut accelerometer = Mma8x5x::new_mma8451(
+        RefCellDevice::new(&i2c_bus),
+        mma8x5x::SlaveAddr::Alternative(true),
+    );
+    let _ = accelerometer.disable_auto_sleep();
+    let _ = accelerometer.set_scale(GScale::G2);
+    let _ = accelerometer.set_data_rate(OutputDataRate::Hz50);
+    let _ = accelerometer.set_wake_power_mode(PowerMode::HighResolution);
+    let _ = accelerometer.set_read_mode(mma8x5x::ReadMode::Normal);
+    let _ = accelerometer.set_offset_correction(
+        acc_offset_x as i8,
+        acc_offset_y as i8,
+        acc_offset_z as i8,
+    );
+    
+    accelerometer
 }
