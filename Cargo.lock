@@ -1017,7 +1017,6 @@ dependencies = [
 name = "tracker-embedded-rs"
 version = "0.1.0"
 dependencies = [
- "critical-section",
  "embassy-executor",
  "embassy-time",
  "embedded-hal 1.0.0",
@@ -1031,7 +1030,6 @@ dependencies = [
  "log",
  "mma8x5x",
  "pololu_tic",
- "static_cell",
  "thiserror",
 ]
 
