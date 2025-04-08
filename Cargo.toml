@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name    = "tracker-embedded-rs"
+name    = "archer"
 version = "0.1.0"
 
 [dependencies]

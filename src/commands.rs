@@ -145,11 +145,20 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 "SSPD INT {VER INT} {HOR INT} {RST}",
                 "GSPD",
                 "HALT",
+                "VERS",
+                "GETC",
+                "INFO",
             ];
 
             for command in command_list {
                 println!("  {}", command);
             }
+        }
+        "GETC" => {
+            println!("{}", is_calibrated);
+        }
+        "VERS" => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
         }
         "SSPD" => match arguments.next() {
             Some("VER") => {
