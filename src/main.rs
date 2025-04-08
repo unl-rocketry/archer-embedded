@@ -140,7 +140,7 @@ async fn main(spawner: Spawner) {
     let mut command_string = String::new();
 
     loop {
-        Timer::after(Duration::from_millis(10)).await;
+        Timer::after(Duration::from_millis(1)).await;
 
         if motor_horizontal.reset_command_timeout().is_err() {
             loop {
