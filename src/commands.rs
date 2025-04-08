@@ -1,13 +1,13 @@
 use crate::{
-    calibrate_vertical, get_delta_angle, get_relative_angle, SPEED_DEFAULT_HORIZONTAL,
-    SPEED_DEFAULT_VERTICAL, SPEED_MAX_HORIZONTAL, SPEED_MAX_VERTICAL, STEPS_PER_DEGREE_HORIZONTAL,
-    STEPS_PER_DEGREE_VERTICAL,
+    SPEED_DEFAULT_HORIZONTAL, SPEED_DEFAULT_VERTICAL, SPEED_MAX_HORIZONTAL, SPEED_MAX_VERTICAL,
+    STEPS_PER_DEGREE_HORIZONTAL, STEPS_PER_DEGREE_VERTICAL, calibrate_vertical, get_delta_angle,
+    get_relative_angle,
 };
 use alloc::format;
 use alloc::string::{String, ToString};
 use esp_println::println;
 use mma8x5x::ic::Mma8451;
-use mma8x5x::{mode, Mma8x5x};
+use mma8x5x::{Mma8x5x, mode};
 use pololu_tic::{TicBase, TicI2C};
 
 #[derive(Debug, thiserror::Error)]
@@ -27,7 +27,7 @@ pub enum ParseErr {
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
     #[error("Command Locked")]
-    CommandLockoutError
+    CommandLockoutError,
 }
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
@@ -79,17 +79,13 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 motor_vertical.halt_and_set_position(0)?;
                 *is_calibrated = true;
             }
-            _ => {
-                match accel {
-                    Some(accel) => {
-                        calibrate_vertical(motor_vertical, accel).await;
-                        *is_calibrated = true
-                    }
-                    None => {
-                        return Err(ParseErr::InvalidCommand)
-                    }
+            _ => match accel {
+                Some(accel) => {
+                    calibrate_vertical(motor_vertical, accel).await;
+                    *is_calibrated = true
                 }
-            }
+                None => return Err(ParseErr::InvalidCommand),
+            },
         },
         "CALH" => {
             motor_horizontal.halt_and_set_position(0)?;
@@ -214,5 +210,6 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
         }
         _ => Err(ParseErr::InvalidCommand)?,
     }
+
     Ok("".to_string())
 }
