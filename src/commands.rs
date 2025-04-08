@@ -155,10 +155,10 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
             }
         }
         "GETC" => {
-            println!("{}", is_calibrated);
+            return Ok(is_calibrated.to_string());
         }
         "VERS" => {
-            println!("{}", env!("CARGO_PKG_VERSION"));
+            return Ok(env!("CARGO_PKG_VERSION").to_string());
         }
         "SSPD" => match arguments.next() {
             Some("VER") => {
