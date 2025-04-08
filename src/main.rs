@@ -17,7 +17,6 @@ use esp_println::{print, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use log::{error, info};
-use mma8x5x::mode::Standby;
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
 use pololu_tic::{TicHandlerError, TicI2C, TicProduct, TicStepMode, base::TicBase};
 
@@ -119,7 +118,7 @@ async fn main(spawner: Spawner) {
 
     uart0.set_at_cmd(esp_hal::uart::AtCmdConfig::default().with_cmd_char(0x04));
 
-    let mut accelerometer = if let Some(a) = accelerometer.into_active().ok() {
+    let mut accelerometer = if let Ok(a) = accelerometer.into_active() {
         info!("MMA8451 set up!!");
         Some(a)
     } else {
