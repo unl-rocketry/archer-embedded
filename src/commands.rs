@@ -26,8 +26,6 @@ pub enum ParseErr {
     InternalError(#[from] pololu_tic::TicHandlerError),
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
-    #[error("Command Locked")]
-    CommandLockoutError,
 }
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
