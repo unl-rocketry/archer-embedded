@@ -101,6 +101,12 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
             Some("RT") => {
                 motor_horizontal.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL/2)?;
             }
+            Some("SV") => {
+                motor_vertical.set_target_velocity(0)?;
+            }
+            Some("SH") => {
+                motor_horizontal.set_target_velocity(0)?;
+            }
             _ => return Err(ParseErr::InvalidCommand),
         }
         "MOVV" => {
