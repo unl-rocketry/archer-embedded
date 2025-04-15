@@ -15,7 +15,7 @@ Positive and negative must be specified.
 Commands respond with `OK\n` if successful, `ERR <REASON>\n` if not. Some commands
 respond with return arguments after the `OK` and before the `\n`.
 
-# Version 1.2.0
+# Version 1.3.0
 
 ## Types
 command:    `ABCD` # 4 ASCII characters
@@ -48,6 +48,11 @@ vertical calibration position to current position.
 Args:
 
 Description: Sets horizontal calibration position to current position.
+
+### `MOVC`
+Args: `[UP, DN, LT, RT]`
+
+Description: Moves in the direction specified until stopped.
 
 ### `MOVV`
 Args: `integer`

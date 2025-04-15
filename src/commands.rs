@@ -88,6 +88,21 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
         "CALH" => {
             motor_horizontal.halt_and_set_position(0)?;
         }
+        "MOVC" => match arguments.next() {
+            Some("UP") => {
+                motor_vertical.set_target_velocity(SPEED_DEFAULT_HORIZONTAL/2)?;
+            }
+            Some("DN") => {
+                motor_vertical.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL/2)?;
+            }
+            Some("LT") => {
+                motor_horizontal.set_target_velocity(SPEED_DEFAULT_HORIZONTAL/2)?;
+            }
+            Some("RT") => {
+                motor_horizontal.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL/2)?;
+            }
+            _ => return Err(ParseErr::InvalidCommand),
+        }
         "MOVV" => {
             let steps_to_move = match arguments
                 .next()
@@ -133,6 +148,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 "DHOR INT",
                 "CALV {SET}",
                 "CALH",
+                "MOVC [UP DN LT RT]",
                 "MOVV INT",
                 "MOVH INT",
                 "GETP",
