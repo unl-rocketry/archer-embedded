@@ -154,15 +154,15 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 "DHOR INT",
                 "CALV {SET}",
                 "CALH",
-                "MOVC [UP DN LT RT]",
+                "MOVC [UP DN LT RT SV SH]",
                 "MOVV INT",
                 "MOVH INT",
                 "GETP",
+                "GETC",
+                "VERS",
                 "SSPD INT {VER INT} {HOR INT} {RST}",
                 "GSPD",
                 "HALT",
-                "VERS",
-                "GETC",
                 "INFO",
             ];
 
