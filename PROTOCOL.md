@@ -15,7 +15,7 @@ Positive and negative must be specified.
 Commands respond with `OK\n` if successful, `ERR <REASON>\n` if not. Some commands
 respond with return arguments after the `OK` and before the `\n`.
 
-# Version 1.1.1
+# Version 1.3.1
 
 ## Types
 command:    `ABCD` # 4 ASCII characters
@@ -48,6 +48,12 @@ vertical calibration position to current position.
 Args:
 
 Description: Sets horizontal calibration position to current position.
+
+### `MOVC`
+Args: `[UP, DN, LT, RT, SV, SH]`
+
+Description: Moves in the direction specified until stopped. `SV` is "Stop
+Vertical", and `SH` is "Stop Horizontal"
 
 ### `MOVV`
 Args: `integer`
@@ -84,6 +90,20 @@ Args:
 Returns: `integer`
 
 Description: Gets speed for both axes.
+
+### `VERS`
+Args:
+
+Returns: `string`
+
+Description: Gets the current version of the software.
+
+### `GETC`
+Args:
+
+Returns: `string`
+
+Description: Returns `true` or `false` depending on the current calibration status.
 
 ### `HALT`
 Args:
