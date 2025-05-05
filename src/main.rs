@@ -7,6 +7,7 @@ use commands::parse_command;
 use alloc::string::String;
 use core::cell::RefCell;
 use embedded_hal_bus::i2c::RefCellDevice;
+use embedded_io::Read;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
@@ -136,8 +137,6 @@ async fn main(spawner: Spawner) {
     let mut command_string = String::new();
 
     loop {
-        Timer::after(Duration::from_millis(1)).await;
-
         while motor_horizontal.reset_command_timeout().is_err() {
             error!("Horizontal motor communication failure, attempting reconnection");
             motor_horizontal =
@@ -156,7 +155,7 @@ async fn main(spawner: Spawner) {
             Timer::after(Duration::from_secs(1)).await;
         }
 
-        let count = uart0.read_buffered_bytes(&mut buffer).unwrap();
+        let count = uart0.read(&mut buffer).unwrap();
 
         // If there were no bytes read, don't try to use them
         if count == 0 {
