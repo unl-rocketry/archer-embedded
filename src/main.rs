@@ -155,7 +155,7 @@ async fn main(spawner: Spawner) {
             Timer::after(Duration::from_secs(1)).await;
         }
 
-        let count = uart0.read(&mut buffer).unwrap();
+        let count = uart0.read_buffered_bytes(&mut buffer).unwrap();
 
         // If there were no bytes read, don't try to use them
         if count == 0 {
