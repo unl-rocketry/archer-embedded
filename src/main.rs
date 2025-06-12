@@ -16,7 +16,7 @@ use esp_hal::{
 use esp_println::{print, println};
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use log::{error, info};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
 use pololu_tic::{TicHandlerError, TicI2C, TicProduct, TicStepMode, base::TicBase};
@@ -136,23 +136,29 @@ async fn main(spawner: Spawner) {
     let mut buffer = [0; 1];
     let mut command_string = String::new();
 
+    let mut timer = Instant::now();
+
     loop {
-        while motor_horizontal.reset_command_timeout().is_err() {
-            error!("Horizontal motor communication failure, attempting reconnection");
-            motor_horizontal =
-                pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
+        if timer.elapsed() > Duration::from_millis(100) {
+            while motor_horizontal.reset_command_timeout().is_err() {
+                error!("Horizontal motor communication failure, attempting reconnection");
+                motor_horizontal =
+                    pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
 
-            let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
-            Timer::after(Duration::from_secs(1)).await;
-        }
+                let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
+                Timer::after(Duration::from_secs(1)).await;
+            }
 
-        while motor_vertical.reset_command_timeout().is_err() {
-            error!("Vertical motor communication failure, attempting reconnection");
-            motor_vertical =
-                pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
+            while motor_vertical.reset_command_timeout().is_err() {
+                error!("Vertical motor communication failure, attempting reconnection");
+                motor_vertical =
+                    pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
 
-            let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
-            Timer::after(Duration::from_secs(1)).await;
+                let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
+                Timer::after(Duration::from_secs(1)).await;
+            }
+
+            timer = Instant::now();
         }
 
         let count = uart0.read_buffered_bytes(&mut buffer).unwrap();
