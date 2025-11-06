@@ -26,6 +26,8 @@ pub enum ParseErr {
     InternalError(#[from] pololu_tic::TicHandlerError),
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
+    #[error("The acceleromter was not found. Use CALV SET instead")]
+    NoAccel,
 }
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
@@ -82,7 +84,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                     calibrate_vertical(motor_vertical, accel).await;
                     *is_calibrated = true
                 }
-                None => return Err(ParseErr::InvalidCommand),
+                None => return Err(ParseErr::NoAccel),
             },
         },
         "CALH" => {
