@@ -6,28 +6,16 @@ version      = "0.1.0"
 [[bin]]
 name = "archer-embedded"
 path = "./src/main.rs"
+test = false
+bench = false
 
 [dependencies]
 esp-hal = { version = "~1.0", features = ["esp32", "log-04", "unstable"] }
-
-esp-rtos = { version = "0.2.0", features = [
-  "embassy",
-  "esp-alloc",
-  "esp-radio",
-  "esp32",
-  "log-04",
-] }
+esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp-radio", "esp32", "log-04"] }
 
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32", "log-04"] }
-log                    = "0.4.27"
+log = "0.4.27"
 
-embassy-net = { version = "0.7.1", features = [
-  "dhcpv4",
-  "log",
-  "medium-ethernet",
-  "tcp",
-  "udp",
-] }
 embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
 esp-alloc = "0.9.0"
@@ -41,35 +29,11 @@ esp-println = { version = "0.16.1", features = ["esp32", "log-04"] }
 bt-hci = "0.6.0"
 embassy-executor = { version = "0.9.1", features = ["log"] }
 embassy-time = { version = "0.5.0", features = ["log"] }
-esp-radio = { version = "0.17.0", features = [
-  "ble",
-  "coex",
-  "esp-alloc",
-  "esp32",
-  "log-04",
-  "smoltcp",
-  "unstable",
-  "wifi",
-] }
-smoltcp = { version = "0.12.0", default-features = false, features = [
-  "log",
-  "medium-ethernet",
-  "multicast",
-  "proto-dhcpv4",
-  "proto-dns",
-  "proto-ipv4",
-  "socket-dns",
-  "socket-icmp",
-  "socket-raw",
-  "socket-tcp",
-  "socket-udp",
-] }
-trouble-host = { version = "0.5.0", features = ["gatt"] }
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
 pololu_tic = "0.2.0-beta.7"
-mma8x5x = { git = "https://github.com/eldruin/mma8x5x-rs.git", rev = "440b76fd53b85d56cc6fdd044e0ddb464cbef87e" }
+mma8x5x = { git = "https://github.com/eldruin/mma8x5x-rs.git" }
 embedded-hal-bus = { version = "0.3.0", features = ["alloc", "async"] }
 embedded-hal = "1.0.0"
 libm = "0.2.16"

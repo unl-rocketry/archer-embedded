@@ -1,15 +1,16 @@
-use crate::{
+use archer_embedded::{
     SPEED_DEFAULT_HORIZONTAL, SPEED_DEFAULT_VERTICAL, SPEED_MAX_HORIZONTAL, SPEED_MAX_VERTICAL,
-    STEPS_PER_DEGREE_HORIZONTAL, STEPS_PER_DEGREE_VERTICAL, calibrate_vertical, get_delta_angle,
-    get_relative_angle,
+    STEPS_PER_DEGREE_HORIZONTAL, STEPS_PER_DEGREE_VERTICAL, get_delta_angle, get_relative_angle,
 };
+
+use crate::calibrate_vertical;
+
 use alloc::format;
 use alloc::string::{String, ToString};
 use embedded_hal::delay::DelayNs;
-use esp_println::println;
 use mma8x5x::ic::Mma8451;
 use mma8x5x::{Mma8x5x, mode};
-use pololu_tic::{TicBase, I2c as TicI2c};
+use pololu_tic::{I2c as TicI2c, TicBase};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErr {
@@ -70,7 +71,9 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c, D: DelayNs>(
                 Ok(n) => n.clamp(-180.0, 180.0),
                 _ => return Err(ParseErr::InvalidNumber),
             };
-            let angle_steps = get_delta_angle(get_relative_angle(motor_horizontal), target_pos)
+
+            let current_angle = motor_horizontal.current_position()?;
+            let angle_steps = get_delta_angle(get_relative_angle(current_angle as f32), target_pos)
                 * STEPS_PER_DEGREE_HORIZONTAL as f32;
             let move_to = motor_horizontal.current_position()? as f32 + angle_steps;
             motor_horizontal.set_target_position(move_to as i32)?;
@@ -93,16 +96,16 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c, D: DelayNs>(
         }
         "MOVC" => match arguments.next() {
             Some("UP") => {
-                motor_vertical.set_target_velocity(SPEED_DEFAULT_HORIZONTAL/2)?;
+                motor_vertical.set_target_velocity(SPEED_DEFAULT_HORIZONTAL / 2)?;
             }
             Some("DN") => {
-                motor_vertical.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL/2)?;
+                motor_vertical.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL / 2)?;
             }
             Some("LT") => {
-                motor_horizontal.set_target_velocity(SPEED_DEFAULT_HORIZONTAL/2)?;
+                motor_horizontal.set_target_velocity(SPEED_DEFAULT_HORIZONTAL / 2)?;
             }
             Some("RT") => {
-                motor_horizontal.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL/2)?;
+                motor_horizontal.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL / 2)?;
             }
             Some("SV") => {
                 motor_vertical.set_target_velocity(0)?;
@@ -111,7 +114,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c, D: DelayNs>(
                 motor_horizontal.set_target_velocity(0)?;
             }
             _ => return Err(ParseErr::InvalidCommand),
-        }
+        },
         "MOVV" => {
             let steps_to_move = match arguments
                 .next()
@@ -150,28 +153,6 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c, D: DelayNs>(
                 horizontal_position += 360.0;
             }
             return Ok(format!("{} {}", vertical_position, horizontal_position));
-        }
-        "INFO" => {
-            let command_list = [
-                "DVER INT",
-                "DHOR INT",
-                "CALV {SET}",
-                "CALH",
-                "MOVC [UP DN LT RT SV SH]",
-                "MOVV INT",
-                "MOVH INT",
-                "GETP",
-                "GETC",
-                "VERS",
-                "SSPD INT {VER INT} {HOR INT} {RST}",
-                "GSPD",
-                "HALT",
-                "INFO",
-            ];
-
-            for command in command_list {
-                println!("  {}", command);
-            }
         }
         "GETC" => {
             return Ok(is_calibrated.to_string());
