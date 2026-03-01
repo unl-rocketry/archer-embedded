@@ -23,6 +23,8 @@ use pololu_tic::{TicHandlerError, TicI2C, TicProduct, TicStepMode, base::TicBase
 
 extern crate alloc;
 
+esp_bootloader_esp_idf::esp_app_desc!();
+
 const STEPS_PER_DEGREE_VERTICAL: u32 =
     (23.3 * tic_step_mult(DEFAULT_STEP_MODE_VERTICAL) as f32) as u32;
 const STEPS_PER_DEGREE_HORIZONTAL: u32 =
@@ -63,14 +65,14 @@ const ACC_OFFSET_X: i16 = 53 / 8;
 const ACC_OFFSET_Y: i16 = 83 / 8;
 const ACC_OFFSET_Z: i16 = -154 / 8;
 
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
-    esp_alloc::heap_allocator!(72 * 1024);
+    esp_alloc::heap_allocator!(size: 72 * 1024);
     esp_println::logger::init_logger_from_env();
     let timer0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1);
-    esp_hal_embassy::init(timer0.timer0);
+    esp_rtos::start(timer0.timer0);
     info!("Embassy initialized!");
 
     let sda = peripherals.GPIO18;
@@ -109,7 +111,7 @@ async fn main(spawner: Spawner) {
     );
 
     let (tx_pin, rx_pin) = (peripherals.GPIO1, peripherals.GPIO3);
-    let config = esp_hal::uart::Config::default().with_rx_fifo_full_threshold(64);
+    let config = esp_hal::uart::Config::default().with_rx(esp_hal::uart::RxConfig::with_fifo_full_threshold(Default::default(), 64));
 
     let mut uart0 = esp_hal::uart::Uart::new(peripherals.UART0, config)
         .unwrap()
@@ -161,7 +163,7 @@ async fn main(spawner: Spawner) {
             timer = Instant::now();
         }
 
-        let count = uart0.read_buffered_bytes(&mut buffer).unwrap();
+        let count = uart0.read_buffered(&mut buffer).unwrap();
 
         // If there were no bytes read, don't try to use them
         if count == 0 {
