@@ -5,10 +5,11 @@ use crate::{
 };
 use alloc::format;
 use alloc::string::{String, ToString};
+use embedded_hal::delay::DelayNs;
 use esp_println::println;
 use mma8x5x::ic::Mma8451;
 use mma8x5x::{Mma8x5x, mode};
-use pololu_tic::{TicBase, TicI2C};
+use pololu_tic::{TicBase, I2c as TicI2c};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErr {
@@ -23,7 +24,7 @@ pub enum ParseErr {
     #[error("not enough arguments were provided")]
     TooFewArguments,
     #[error("the motor controllers experienced an error")]
-    InternalError(#[from] pololu_tic::TicHandlerError),
+    InternalError(#[from] pololu_tic::HandlerError),
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
     #[error("The acceleromter was not found. Use CALV SET instead")]
@@ -32,9 +33,9 @@ pub enum ParseErr {
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
 
-pub async fn parse_command<I: embedded_hal::i2c::I2c>(
-    motor_vertical: &mut TicI2C<I>,
-    motor_horizontal: &mut TicI2C<I>,
+pub async fn parse_command<I: embedded_hal::i2c::I2c, D: DelayNs>(
+    motor_vertical: &mut TicI2c<I, D>,
+    motor_horizontal: &mut TicI2c<I, D>,
     accel: &mut Option<Mma8x5x<I, Mma8451, mode::Active>>,
     input: &str,
     is_calibrated: &mut bool,

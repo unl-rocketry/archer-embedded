@@ -1,32 +1,42 @@
-#![no_main]
 #![no_std]
+#![no_main]
+#![deny(
+    clippy::mem_forget,
+    reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
+    holding buffers for the duration of a data transfer."
+)]
+#![deny(clippy::large_stack_frames)]
 
 mod commands;
-use commands::parse_command;
+
+use core::cell::RefCell;
 
 use alloc::string::String;
-use core::cell::RefCell;
-use embedded_hal_bus::i2c::RefCellDevice;
-use embedded_io::Read;
-use esp_backtrace as _;
-use esp_hal::{
-    clock::CpuClock,
-    i2c::{self, master::I2c},
-};
-use esp_println::{print, println};
-
+use bt_hci::controller::ExternalController;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
-use log::{error, info};
+use embassy_time::{Delay, Duration, Instant, Timer};
+use embedded_hal::delay::DelayNs;
+use embedded_hal_bus::i2c::RefCellDevice;
+use esp_backtrace as _;
+use esp_hal::clock::CpuClock;
+use esp_hal::timer::timg::TimerGroup;
+use esp_println::{println, print};
+use esp_radio::ble::controller::BleConnector;
+use log::info;
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
-use pololu_tic::{TicHandlerError, TicI2C, TicProduct, TicStepMode, base::TicBase};
+use trouble_host::prelude::*;
+
+use pololu_tic::{HandlerError, I2c as TicI2c, Product, TicBase as _, variables::StepMode};
+
+use esp_hal::i2c::{self, master::I2c};
 
 extern crate alloc;
 
-const STEPS_PER_DEGREE_VERTICAL: u32 =
-    (23.3 * tic_step_mult(DEFAULT_STEP_MODE_VERTICAL) as f32) as u32;
-const STEPS_PER_DEGREE_HORIZONTAL: u32 =
-    (126.0 * tic_step_mult(DEFAULT_STEP_MODE_HORIZONTAL) as f32) as u32;
+const CONNECTIONS_MAX: usize = 1;
+const L2CAP_CHANNELS_MAX: usize = 1;
+
+const STEPS_PER_DEGREE_VERTICAL: u32 = (23.3 * tic_step_mult(DEFAULT_STEP_MODE_VERTICAL) as f32) as u32;
+const STEPS_PER_DEGREE_HORIZONTAL: u32 = (126.0 * tic_step_mult(DEFAULT_STEP_MODE_HORIZONTAL) as f32) as u32;
 const SPEED_VERYSLOW: i32 = 20000 * tic_step_mult(DEFAULT_STEP_MODE_VERTICAL) as i32; //only used on CALV so no need to add a second one
 const SPEED_DEFAULT_VERTICAL: i32 = 15000000 * tic_step_mult(DEFAULT_STEP_MODE_VERTICAL) as i32;
 const SPEED_DEFAULT_HORIZONTAL: i32 = 10000000 * tic_step_mult(DEFAULT_STEP_MODE_HORIZONTAL) as i32;
@@ -38,45 +48,71 @@ const TIC_DECEL_DEFAULT_VERTICAL: u32 =
 const TIC_DECEL_DEFAULT_HORIZONTAL: u32 =
     300000 * tic_step_mult(DEFAULT_STEP_MODE_HORIZONTAL) as u32;
 
-const DEFAULT_CURRENT: u16 = 1024;
-
-const DEFAULT_STEP_MODE_VERTICAL: TicStepMode = TicStepMode::Microstep16;
-const DEFAULT_STEP_MODE_HORIZONTAL: TicStepMode = TicStepMode::Microstep8;
-
-pub const fn tic_step_mult(step_mode: TicStepMode) -> u16 {
+pub const fn tic_step_mult(step_mode: StepMode) -> u16 {
     match step_mode {
-        TicStepMode::Full => 1,
-        TicStepMode::Half => 2,
-        TicStepMode::Microstep2_100p => 2,
-        TicStepMode::Microstep4 => 4,
-        TicStepMode::Microstep8 => 8,
-        TicStepMode::Microstep16 => 16,
-        TicStepMode::Microstep32 => 32,
-        TicStepMode::Microstep64 => 64,
-        TicStepMode::Microstep128 => 128,
-        TicStepMode::Microstep256 => 256,
+        StepMode::Full => 1,
+        StepMode::Half => 2,
+        StepMode::Microstep2_100p => 2,
+        StepMode::Microstep4 => 4,
+        StepMode::Microstep8 => 8,
+        StepMode::Microstep16 => 16,
+        StepMode::Microstep32 => 32,
+        StepMode::Microstep64 => 64,
+        StepMode::Microstep128 => 128,
+        StepMode::Microstep256 => 256,
     }
 }
+
+const DEFAULT_CURRENT: u16 = 1024;
+
+const DEFAULT_STEP_MODE_VERTICAL: StepMode = StepMode::Microstep16;
+const DEFAULT_STEP_MODE_HORIZONTAL: StepMode = StepMode::Microstep8;
 
 // Offsets calculated manually from accelerometer data
 const ACC_OFFSET_X: i16 = 53 / 8;
 const ACC_OFFSET_Y: i16 = 83 / 8;
 const ACC_OFFSET_Z: i16 = -154 / 8;
 
-#[esp_hal_embassy::main]
-async fn main(spawner: Spawner) {
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
-    let peripherals = esp_hal::init(config);
-    esp_alloc::heap_allocator!(72 * 1024);
+// This creates a default app-descriptor required by the esp-idf bootloader.
+// For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[allow(
+    clippy::large_stack_frames,
+    reason = "it's not unusual to allocate larger buffers etc. in main"
+)]
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
-    let timer0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1);
-    esp_hal_embassy::init(timer0.timer0);
+
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
+
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
+    esp_alloc::heap_allocator!(size: 64 * 1024);
+
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    esp_rtos::start(timg0.timer0);
+
     info!("Embassy initialized!");
+
+    let radio_init = esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller");
+    let (mut _wifi_controller, _interfaces) =
+        esp_radio::wifi::new(&radio_init, peripherals.WIFI, Default::default())
+            .expect("Failed to initialize Wi-Fi controller");
+    // find more examples https://github.com/embassy-rs/trouble/tree/main/examples/esp32
+    let transport = BleConnector::new(&radio_init, peripherals.BT, Default::default()).unwrap();
+    let ble_controller = ExternalController::<_, 1>::new(transport);
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
+    let _stack = trouble_host::new(ble_controller, &mut resources);
 
     let sda = peripherals.GPIO18;
     let scl = peripherals.GPIO19;
 
+    // TODO: Spawn some tasks
     let _ = spawner;
+
 
     let i2c_bus = I2c::new(
         peripherals.I2C0,
@@ -88,10 +124,11 @@ async fn main(spawner: Spawner) {
     .into_async();
     let i2c_bus = RefCell::new(i2c_bus);
 
+
     let mut motor_horizontal =
-        pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
+        pololu_tic::I2c::new_with_address(RefCellDevice::new(&i2c_bus), pololu_tic::Product::Tic36v4, Delay, 14);
     let mut motor_vertical =
-        pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
+        pololu_tic::I2c::new_with_address(RefCellDevice::new(&i2c_bus), pololu_tic::Product::Tic36v4, Delay, 15);
 
     let mut accelerometer = Mma8x5x::new_mma8451(
         RefCellDevice::new(&i2c_bus),
@@ -108,8 +145,12 @@ async fn main(spawner: Spawner) {
         ACC_OFFSET_Z as i8,
     );
 
+    setup_motor(&mut motor_horizontal, MotorAxis::Horizontal).expect("Horizontal motor setup error");
+    setup_motor(&mut motor_vertical, MotorAxis::Vertical).expect("Vertical motor setup error");
+    info!("Motors set up!!");
+
     let (tx_pin, rx_pin) = (peripherals.GPIO1, peripherals.GPIO3);
-    let config = esp_hal::uart::Config::default().with_rx_fifo_full_threshold(64);
+    let config = esp_hal::uart::Config::default();
 
     let mut uart0 = esp_hal::uart::Uart::new(peripherals.UART0, config)
         .unwrap()
@@ -117,19 +158,12 @@ async fn main(spawner: Spawner) {
         .with_rx(rx_pin)
         .into_async();
 
-    uart0.set_at_cmd(esp_hal::uart::AtCmdConfig::default().with_cmd_char(0x04));
-
     let mut accelerometer = if let Ok(a) = accelerometer.into_active() {
         info!("MMA8451 set up!!");
         Some(a)
     } else {
         None
     };
-
-    setup_motor(&mut motor_horizontal, MotorAxis::Horizontal)
-        .expect("Horizontal motor setup error");
-    setup_motor(&mut motor_vertical, MotorAxis::Vertical).expect("Vertical motor setup error");
-    info!("Motors set up!!");
 
     let mut is_calibrated = false;
 
@@ -141,27 +175,31 @@ async fn main(spawner: Spawner) {
     loop {
         if timer.elapsed() > Duration::from_millis(100) {
             while motor_horizontal.reset_command_timeout().is_err() {
-                error!("Horizontal motor communication failure, attempting reconnection");
+                log::error!("Horizontal motor communication failure, attempting reconnection");
                 motor_horizontal =
-                    pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
+                TicI2c::new_with_address(RefCellDevice::new(&i2c_bus), Product::Tic36v4, Delay, 14);
 
-                let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
+                if setup_motor(&mut motor_horizontal, MotorAxis::Horizontal).is_ok() {
+                    info!("Horizontal motor communication restored!");
+                }
                 Timer::after(Duration::from_secs(1)).await;
             }
 
             while motor_vertical.reset_command_timeout().is_err() {
-                error!("Vertical motor communication failure, attempting reconnection");
+                log::error!("Vertical motor communication failure, attempting reconnection");
                 motor_vertical =
-                    pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
+                TicI2c::new_with_address(RefCellDevice::new(&i2c_bus), Product::Tic36v4, Delay, 15);
 
-                let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
+                if setup_motor(&mut motor_vertical, MotorAxis::Vertical).is_ok() {
+                    info!("Vertical motor communication restored!");
+                }
                 Timer::after(Duration::from_secs(1)).await;
             }
 
             timer = Instant::now();
         }
 
-        let count = uart0.read_buffered_bytes(&mut buffer).unwrap();
+        let count = uart0.read_buffered(&mut buffer).unwrap();
 
         // If there were no bytes read, don't try to use them
         if count == 0 {
@@ -170,7 +208,7 @@ async fn main(spawner: Spawner) {
 
         if buffer[0] == b'\x1B' {
             command_string.clear();
-            match parse_command(
+            match commands::parse_command(
                 &mut motor_vertical,
                 &mut motor_horizontal,
                 &mut accelerometer,
@@ -189,7 +227,7 @@ async fn main(spawner: Spawner) {
             println!();
             command_string += " ";
 
-            match parse_command(
+            match commands::parse_command(
                 &mut motor_vertical,
                 &mut motor_horizontal,
                 &mut accelerometer,
@@ -231,14 +269,14 @@ fn calculate_pitch<I: embedded_hal::i2c::I2c>(
     let z = data.z;
 
     libm::atan2f(-x, libm::powf(y, 2.0) + libm::powf(z, 2.0))
-        * (180.0 / core::f64::consts::PI as f32)
+    * (180.0 / core::f64::consts::PI as f32)
 }
 
 /// Function to set up motors
-fn setup_motor<I: embedded_hal::i2c::I2c>(
-    motor: &mut TicI2C<I>,
+fn setup_motor<I: embedded_hal::i2c::I2c, D: DelayNs>(
+    motor: &mut TicI2c<I, D>,
     motor_axis: MotorAxis,
-) -> Result<(), TicHandlerError> {
+) -> Result<(), HandlerError> {
     motor.set_current_limit(DEFAULT_CURRENT)?;
     motor.halt_and_set_position(0)?;
 
@@ -262,15 +300,16 @@ fn setup_motor<I: embedded_hal::i2c::I2c>(
     Ok(())
 }
 
-async fn calibrate_vertical<I: embedded_hal::i2c::I2c>(
-    motor: &mut TicI2C<I>,
+
+async fn calibrate_vertical<I: embedded_hal::i2c::I2c, D: DelayNs>(
+    motor: &mut TicI2c<I, D>,
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
 ) {
     const ZERO_CAL: f64 = 0.2;
     let mut target_velocity: i32;
     motor.set_max_decel(5000000).unwrap();
     motor.set_max_accel(5000000).unwrap();
-    motor.set_step_mode(TicStepMode::Microstep8).unwrap();
+    motor.set_step_mode(StepMode::Microstep8).unwrap();
 
     //find zero
     loop {
@@ -285,8 +324,8 @@ async fn calibrate_vertical<I: embedded_hal::i2c::I2c>(
 
         // Prevents movement from erroring out
         motor
-            .reset_command_timeout()
-            .expect("Motor horizontal communication failure");
+        .reset_command_timeout()
+        .expect("Motor horizontal communication failure");
 
         // Slow down after reaching within 0.5 degrees
         if f64::abs(pitch_sum - ZERO_CAL) < 0.5 {
@@ -322,9 +361,9 @@ fn get_delta_angle(curr_angle: f32, new_angle: f32) -> f32 {
     }
 }
 
-fn get_relative_angle<I: embedded_hal::i2c::I2c>(motor: &mut TicI2C<I>) -> f32 {
+fn get_relative_angle<I: embedded_hal::i2c::I2c, D: DelayNs>(motor: &mut TicI2c<I, D>) -> f32 {
     let mut curr_angle: f32 =
-        motor.current_position().unwrap() as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
+    motor.current_position().unwrap() as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
 
     while curr_angle > 180.0 {
         curr_angle -= 360.0;
