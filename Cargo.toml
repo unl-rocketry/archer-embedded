@@ -32,7 +32,7 @@ mma8x5x = { git = "https://github.com/eldruin/mma8x5x-rs.git" }
 libm = "0.2"
 thiserror = { version = "2.0", default-features = false }
 embedded-io = "0.7.1"
-esp-bootloader-esp-idf = "0.4.0"
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32"] }
 
 [profile.dev]
 # Rust debug is too slow.
