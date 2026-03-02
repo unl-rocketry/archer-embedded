@@ -24,7 +24,7 @@ esp-rtos = { version = "0.2", features = [
   "esp32",
 ] }
 esp-println = { version = "0.16", features = ["esp32", "log-04"] }
-pololu_tic = "0.1"
+pololu_tic = "0.2.0-beta.7"
 log = "0.4"
 embedded-hal-bus = "0.3"
 embedded-hal = "1.0"

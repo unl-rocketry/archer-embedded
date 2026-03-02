@@ -17,9 +17,13 @@ use esp_println::{print, println};
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
+use embedded_hal::spi::Operation::DelayNs;
+use embedded_hal_bus::spi::NoDelay;
+use esp_hal::twai::EspTwaiError::EmbeddedHAL;
 use log::{error, info};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
-use pololu_tic::{TicHandlerError, TicI2C, TicProduct, TicStepMode, base::TicBase};
+use pololu_tic::{TicBase as _, I2c as TicI2C, Product as TicProduct, HandlerError as TicHandlerError};
+use pololu_tic::variables::StepMode as TicStepMode;
 
 extern crate alloc;
 
@@ -91,9 +95,9 @@ async fn main(spawner: Spawner) {
     let i2c_bus = RefCell::new(i2c_bus);
 
     let mut motor_horizontal =
-        pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
+        TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 14);
     let mut motor_vertical =
-        pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
+        TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 15);
 
     let mut accelerometer = Mma8x5x::new_mma8451(
         RefCellDevice::new(&i2c_bus),
@@ -145,7 +149,7 @@ async fn main(spawner: Spawner) {
             while motor_horizontal.reset_command_timeout().is_err() {
                 error!("Horizontal motor communication failure, attempting reconnection");
                 motor_horizontal =
-                    pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 14);
+                    TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 14);
 
                 let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
                 Timer::after(Duration::from_secs(1)).await;
@@ -154,7 +158,7 @@ async fn main(spawner: Spawner) {
             while motor_vertical.reset_command_timeout().is_err() {
                 error!("Vertical motor communication failure, attempting reconnection");
                 motor_vertical =
-                    pololu_tic::TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, 15);
+                    TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 15);
 
                 let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
                 Timer::after(Duration::from_secs(1)).await;
@@ -238,7 +242,7 @@ fn calculate_pitch<I: embedded_hal::i2c::I2c>(
 
 /// Function to set up motors
 fn setup_motor<I: embedded_hal::i2c::I2c>(
-    motor: &mut TicI2C<I>,
+    motor: &mut TicI2C<I, NoDelay>,
     motor_axis: MotorAxis,
 ) -> Result<(), TicHandlerError> {
     motor.set_current_limit(DEFAULT_CURRENT)?;
@@ -265,7 +269,7 @@ fn setup_motor<I: embedded_hal::i2c::I2c>(
 }
 
 async fn calibrate_vertical<I: embedded_hal::i2c::I2c>(
-    motor: &mut TicI2C<I>,
+    motor: &mut TicI2C<I, NoDelay>,
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
 ) {
     const ZERO_CAL: f64 = 0.2;
@@ -324,7 +328,7 @@ fn get_delta_angle(curr_angle: f32, new_angle: f32) -> f32 {
     }
 }
 
-fn get_relative_angle<I: embedded_hal::i2c::I2c>(motor: &mut TicI2C<I>) -> f32 {
+fn get_relative_angle<I: embedded_hal::i2c::I2c>(motor: &mut TicI2C<I, NoDelay>) -> f32 {
     let mut curr_angle: f32 =
         motor.current_position().unwrap() as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
 
