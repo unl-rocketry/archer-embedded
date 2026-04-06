@@ -7,7 +7,6 @@ use commands::parse_command;
 use alloc::string::String;
 use core::cell::RefCell;
 use embedded_hal_bus::i2c::RefCellDevice;
-use embedded_io::Read;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
@@ -17,9 +16,7 @@ use esp_println::{print, println};
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
-use embedded_hal::spi::Operation::DelayNs;
 use embedded_hal_bus::spi::NoDelay;
-use esp_hal::twai::EspTwaiError::EmbeddedHAL;
 use log::{error, info};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
 use pololu_tic::{TicBase as _, I2c as TicI2C, Product as TicProduct, HandlerError as TicHandlerError};
