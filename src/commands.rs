@@ -177,7 +177,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
             return Ok(is_calibrated.to_string());
         }
         "VERS" => {
-            return Ok(env!("CARGO_PKG_VERSION").to_string());
+            return Ok(env!("PROTOCOL_VERSION").to_string());
         }
         "SSPD" => match arguments.next() {
             Some("VER") => {
