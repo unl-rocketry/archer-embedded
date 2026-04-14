@@ -28,6 +28,7 @@ dependencies = [
  "log",
  "mma8x5x",
  "pololu_tic",
+ "serde",
  "thiserror",
 ]
 
