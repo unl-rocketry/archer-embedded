@@ -10,7 +10,6 @@ use esp_println::println;
 use mma8x5x::ic::Mma8451;
 use mma8x5x::{Mma8x5x, mode};
 use pololu_tic::{TicBase, I2c as TicI2C};
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErr {
@@ -32,16 +31,6 @@ pub enum ParseErr {
     NoAccel,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Status {
-    calibrated: bool,
-    vertical_position: f32,
-    horizontal_position: f32,
-    vertical_speed: u32,
-    horizontal_speed: u32,
-    last_command: Option<String>,
-}
-
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
 
 pub async fn parse_command<I: embedded_hal::i2c::I2c>(
@@ -49,22 +38,12 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
     motor_horizontal: &mut TicI2C<I, NoDelay>,
     accel: &mut Option<Mma8x5x<I, Mma8451, mode::Active>>,
     input: &str,
-    is_calibrated: bool,
+    is_calibrated: &mut bool,
 ) -> Result<String, ParseErr> {
-
-    let mut status = Status {
-        calibrated: is_calibrated,
-        vertical_position: motor_vertical.current_position()? as f32 / STEPS_PER_DEGREE_VERTICAL as f32,
-        horizontal_position: motor_horizontal.current_position()? as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32,
-        vertical_speed: motor_vertical.max_speed()?,
-        horizontal_speed: motor_horizontal.max_speed()?,
-        last_command: None
-    };
-
     let input = input.to_ascii_uppercase();
     let mut arguments = input.split_whitespace().peekable();
 
-    if (status.calibrated == false) && arguments.peek().is_some_and(|a| BLACKLIST.contains(a)) {
+    if !*is_calibrated && arguments.peek().is_some_and(|a| BLACKLIST.contains(a)) {
         return Err(ParseErr::Uncalibrated);
     }
 
@@ -99,12 +78,12 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
         "CALV" => match arguments.next() {
             Some("SET") => {
                 motor_vertical.halt_and_set_position(0)?;
-                status.calibrated = true;
+                *is_calibrated = true;
             }
             _ => match accel {
                 Some(accel) => {
                     calibrate_vertical(motor_vertical, accel).await;
-                    status.calibrated = true
+                    *is_calibrated = true
                 }
                 None => return Err(ParseErr::NoAccel),
             },
@@ -195,7 +174,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
             }
         }
         "GETC" => {
-            return Ok(status.calibrated.to_string());
+            return Ok(is_calibrated.to_string());
         }
         "VERS" => {
             return Ok(env!("PROTOCOL_VERSION").to_string());
