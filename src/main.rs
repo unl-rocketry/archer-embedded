@@ -135,7 +135,7 @@ async fn main(spawner: Spawner) {
     setup_motor(&mut motor_vertical, MotorAxis::Vertical).expect("Vertical motor setup error");
     info!("Motors set up!!");
 
-    let mut is_calibrated = false;
+    let is_calibrated = false;
 
     let mut buffer = [0; 1];
     let mut command_string = String::new();
@@ -179,7 +179,7 @@ async fn main(spawner: Spawner) {
                 &mut motor_horizontal,
                 &mut accelerometer,
                 "HALT ",
-                &mut is_calibrated,
+                is_calibrated,
             )
             .await
             {
@@ -198,7 +198,7 @@ async fn main(spawner: Spawner) {
                 &mut motor_horizontal,
                 &mut accelerometer,
                 &command_string,
-                &mut is_calibrated,
+                is_calibrated,
             )
             .await
             {

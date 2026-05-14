@@ -38,12 +38,12 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
     motor_horizontal: &mut TicI2C<I, NoDelay>,
     accel: &mut Option<Mma8x5x<I, Mma8451, mode::Active>>,
     input: &str,
-    is_calibrated: &mut bool,
+    is_calibrated: bool,
 ) -> Result<String, ParseErr> {
     let input = input.to_ascii_uppercase();
     let mut arguments = input.split_whitespace().peekable();
 
-    if !*is_calibrated && arguments.peek().is_some_and(|a| BLACKLIST.contains(a)) {
+    if (status.calibrated == false) && arguments.peek().is_some_and(|a| BLACKLIST.contains(a)) {
         return Err(ParseErr::Uncalibrated);
     }
 
@@ -78,12 +78,12 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
         "CALV" => match arguments.next() {
             Some("SET") => {
                 motor_vertical.halt_and_set_position(0)?;
-                *is_calibrated = true;
+                status.calibrated = true;
             }
             _ => match accel {
                 Some(accel) => {
                     calibrate_vertical(motor_vertical, accel).await;
-                    *is_calibrated = true
+                    status.calibrated = true
                 }
                 None => return Err(ParseErr::NoAccel),
             },
@@ -174,7 +174,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
             }
         }
         "GETC" => {
-            return Ok(is_calibrated.to_string());
+            return Ok(status.calibrated.to_string());
         }
         "VERS" => {
             return Ok(env!("PROTOCOL_VERSION").to_string());
