@@ -17,6 +17,7 @@ use esp_println::{print, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_hal_bus::spi::NoDelay;
+use embedded_io::Write;
 use log::{error, info};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
 use pololu_tic::{TicBase as _, I2c as TicI2C, Product as TicProduct, HandlerError as TicHandlerError};
@@ -164,7 +165,7 @@ async fn main(spawner: Spawner) {
             timer = Instant::now();
         }
 
-        let count = uart0.read_buffered(&mut buffer).unwrap();
+        let Ok(count) = uart0.read_buffered(&mut buffer) else { continue };
 
         // If there were no bytes read, don't try to use them
         if count == 0 {
