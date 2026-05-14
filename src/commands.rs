@@ -111,7 +111,7 @@ pub async fn parse_command<I: embedded_hal::i2c::I2c>(
                 motor_horizontal.set_target_velocity(0)?;
             }
             _ => return Err(ParseErr::InvalidCommand),
-        }
+        },
         "MOVV" => {
             let steps_to_move = match arguments
                 .next()

@@ -20,8 +20,10 @@ use embedded_hal_bus::spi::NoDelay;
 use embedded_io::Write;
 use log::{error, info};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
-use pololu_tic::{TicBase as _, I2c as TicI2C, Product as TicProduct, HandlerError as TicHandlerError};
 use pololu_tic::variables::StepMode as TicStepMode;
+use pololu_tic::{
+    HandlerError as TicHandlerError, I2c as TicI2C, Product as TicProduct, TicBase as _,
+};
 
 extern crate alloc;
 
@@ -92,10 +94,18 @@ async fn main(spawner: Spawner) {
     .into_async();
     let i2c_bus = RefCell::new(i2c_bus);
 
-    let mut motor_horizontal =
-        TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 14);
-    let mut motor_vertical =
-        TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 15);
+    let mut motor_horizontal = TicI2C::new_with_address(
+        RefCellDevice::new(&i2c_bus),
+        TicProduct::Tic36v4,
+        NoDelay,
+        14,
+    );
+    let mut motor_vertical = TicI2C::new_with_address(
+        RefCellDevice::new(&i2c_bus),
+        TicProduct::Tic36v4,
+        NoDelay,
+        15,
+    );
 
     let mut accelerometer = Mma8x5x::new_mma8451(
         RefCellDevice::new(&i2c_bus),
@@ -113,7 +123,9 @@ async fn main(spawner: Spawner) {
     );
 
     let (tx_pin, rx_pin) = (peripherals.GPIO1, peripherals.GPIO3);
-    let config = esp_hal::uart::Config::default().with_rx(esp_hal::uart::RxConfig::with_fifo_full_threshold(Default::default(), 64));
+    let config = esp_hal::uart::Config::default().with_rx(
+        esp_hal::uart::RxConfig::with_fifo_full_threshold(Default::default(), 64),
+    );
 
     let mut uart0 = esp_hal::uart::Uart::new(peripherals.UART0, config)
         .unwrap()
@@ -146,8 +158,12 @@ async fn main(spawner: Spawner) {
         if timer.elapsed() > Duration::from_millis(100) {
             while motor_horizontal.reset_command_timeout().is_err() {
                 error!("Horizontal motor communication failure, attempting reconnection");
-                motor_horizontal =
-                    TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 14);
+                motor_horizontal = TicI2C::new_with_address(
+                    RefCellDevice::new(&i2c_bus),
+                    TicProduct::Tic36v4,
+                    NoDelay,
+                    14,
+                );
 
                 let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
                 Timer::after(Duration::from_secs(1)).await;
@@ -155,8 +171,12 @@ async fn main(spawner: Spawner) {
 
             while motor_vertical.reset_command_timeout().is_err() {
                 error!("Vertical motor communication failure, attempting reconnection");
-                motor_vertical =
-                    TicI2C::new_with_address(RefCellDevice::new(&i2c_bus), TicProduct::Tic36v4, NoDelay, 15);
+                motor_vertical = TicI2C::new_with_address(
+                    RefCellDevice::new(&i2c_bus),
+                    TicProduct::Tic36v4,
+                    NoDelay,
+                    15,
+                );
 
                 let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
                 Timer::after(Duration::from_secs(1)).await;
@@ -165,7 +185,9 @@ async fn main(spawner: Spawner) {
             timer = Instant::now();
         }
 
-        let Ok(count) = uart0.read_buffered(&mut buffer) else { continue };
+        let Ok(count) = uart0.read_buffered(&mut buffer) else {
+            continue;
+        };
 
         // If there were no bytes read, don't try to use them
         if count == 0 {
