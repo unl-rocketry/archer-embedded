@@ -11,15 +11,14 @@ use embassy_time::{Duration, Instant, Timer};
 use embedded_hal_bus::i2c::RefCellDevice;
 use embedded_hal_bus::spi::NoDelay;
 use esp_hal::uart::Uart;
-use esp_hal::{i2c, Async};
+use esp_hal::{i2c};
 use esp_hal::i2c::master::I2c;
 use esp_println::{print, println};
 use log::{error, info};
-use mma8x5x::ic::Mma8451;
-use mma8x5x::{mode, GScale, Mma8x5x, OutputDataRate, PowerMode};
+use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode};
 use pololu_tic::{I2c as TicI2C, TicBase};
 use core::cell::RefCell;
-use esp_hal::peripherals::{Peripherals, GPIO1, GPIO18, GPIO19, GPIO3, I2C0, UART0};
+use esp_hal::peripherals::{GPIO1, GPIO18, GPIO19, GPIO3, I2C0, UART0};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErr {
@@ -43,12 +42,13 @@ pub enum ParseErr {
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
 
+#[embassy_executor::task]
 pub async fn control_loop(
-    sda: GPIO18<'_>,
-    scl: GPIO19<'_>,
-    i2c0: I2C0<'_>,
-    command_channel: Receiver<'_, CriticalSectionRawMutex, Control, 50>,
-    e_stop_channel: Receiver<'_, CriticalSectionRawMutex, Control, 1>,
+    sda: GPIO18<'static>,
+    scl: GPIO19<'static>,
+    i2c0: I2C0<'static>,
+    command_channel: Receiver<'static, CriticalSectionRawMutex, Control, 50>,
+    e_stop_channel: Receiver<'static, CriticalSectionRawMutex, Control, 1>,
     position: Arc<RwLock<CriticalSectionRawMutex, Position>>,
     status: Arc<RwLock<CriticalSectionRawMutex, Status>>,
 ) {
@@ -169,15 +169,16 @@ pub async fn control_loop(
                     }
                     Control::CALV => {
                         if let Some(accel) = &mut accel {
+                            status.write().await.calibration_status(CalibrationStatus::Calibrating);
                             calibrate_vertical(&mut motor_vertical, accel).await;
-                            status.write().await.calibration_status = CalibrationStatus::Calibrated;
+                            status.write().await.calibration_status(CalibrationStatus::Calibrated);
                         } else {
                             // return Err(ParseErr::NoAccel)
                         }
                     },
                     Control::CALV_SET => {
                         motor_vertical.halt_and_set_position(0).unwrap();
-                        status.write().await.calibration_status = CalibrationStatus::Calibrated;
+                        status.write().await.calibration_status(CalibrationStatus::Calibrated);
                     },
                     Control::CALH => {
                         motor_horizontal.halt_and_set_position(0).unwrap();

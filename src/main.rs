@@ -4,13 +4,12 @@
 mod commands;
 
 use alloc::sync::Arc;
-use core::cell::RefCell;
 use derive_more::Display;
-use embedded_hal_bus::i2c::RefCellDevice;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
-    i2c::{self, master::I2c},
+    interrupt::software::SoftwareInterruptControl,
+    system::{Stack}
 };
 
 use embassy_executor::Spawner;
@@ -19,13 +18,15 @@ use embassy_sync::channel::Channel;
 use embassy_sync::rwlock::RwLock;
 use embassy_time::{Duration, Timer};
 use embedded_hal_bus::spi::NoDelay;
+use esp_rtos::embassy::Executor;
 use log::{info, warn};
-use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
+use mma8x5x::{Mma8x5x, ic::Mma8451, mode};
 use pololu_tic::variables::StepMode as TicStepMode;
 use pololu_tic::{
     HandlerError as TicHandlerError, I2c as TicI2C, Product as TicProduct, TicBase as _,
 };
 use crate::commands::{command_loop, control_loop};
+use static_cell::StaticCell;
 
 extern crate alloc;
 
@@ -75,6 +76,9 @@ const ACC_OFFSET_Z: i16 = -154 / 8;
 async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
+    static APP_CORE_STACK: StaticCell<Stack<8192>> = StaticCell::new();
+    let app_core_stack = APP_CORE_STACK.init(Stack::new());
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_alloc::heap_allocator!(size: 72 * 1024);
     esp_println::logger::init_logger_from_env();
     let timer0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1);
@@ -88,7 +92,6 @@ async fn main(spawner: Spawner) {
 
     let _ = spawner;
 
-    // todo!("Spawn threads for the command loop and control loop");
     let status = Status {
         calibration_status: CalibrationStatus::Uncalibrated,
         vertical_speed: 0,
@@ -106,15 +109,34 @@ async fn main(spawner: Spawner) {
 
     let status = Arc::new(RwLock::new(status));
     let position = Arc::new(RwLock::new(position));
-    let command_channel = Channel::<CriticalSectionRawMutex, Control, 50>::new();
-    let command_send = command_channel.sender();
-    let command_recv = command_channel.receiver();
-    let e_stop_channel = Channel::<CriticalSectionRawMutex, Control, 1>::new();
-    let e_stop_send = e_stop_channel.sender();
-    let e_stop_recv = e_stop_channel.receiver();
-    
-    control_loop(sda, scl, i2c0, command_recv, e_stop_recv, position.clone(), status.clone()).await;
+    static COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, Control, 50> = Channel::new();
+    let command_send = COMMAND_CHANNEL.sender();
+    let command_recv = COMMAND_CHANNEL.receiver();
+    static E_STOP_CHANNEL: Channel<CriticalSectionRawMutex, Control, 1> = Channel::new();
+    let e_stop_send = E_STOP_CHANNEL.sender();
+    let e_stop_recv = E_STOP_CHANNEL.receiver();
+
+    let position_clone = position.clone();
+    let status_clone = status.clone();
+
+    esp_rtos::start_second_core(
+        peripherals.CPU_CTRL,
+        sw_int.software_interrupt0,
+        sw_int.software_interrupt1,
+        app_core_stack,
+        move || {
+            static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+            let executor = EXECUTOR.init(Executor::new());
+        executor.run(|spawner| {
+                spawner.spawn(control_loop(sda, scl, i2c0, command_recv, e_stop_recv, position_clone, status_clone)).unwrap();
+            });
+        },
+    );
+
+    // spawner.spawn(control_loop(sda, scl, i2c0, command_recv, e_stop_recv, position.clone(), status.clone())).unwrap();
     command_loop(tx_pin, rx_pin, uart0, position.clone(), status.clone(), command_send, e_stop_send).await;
+
+
 
 
 
