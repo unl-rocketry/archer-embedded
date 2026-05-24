@@ -2,28 +2,30 @@
 #![no_std]
 
 mod commands;
-use commands::parse_command;
 
-use alloc::string::String;
+use alloc::sync::Arc;
 use core::cell::RefCell;
+use derive_more::Display;
 use embedded_hal_bus::i2c::RefCellDevice;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     i2c::{self, master::I2c},
 };
-use esp_println::{print, println};
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_sync::rwlock::RwLock;
+use embassy_time::{Duration, Timer};
 use embedded_hal_bus::spi::NoDelay;
-use embedded_io::Write;
-use log::{error, info};
+use log::{info, warn};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode, ic::Mma8451, mode};
 use pololu_tic::variables::StepMode as TicStepMode;
 use pololu_tic::{
     HandlerError as TicHandlerError, I2c as TicI2C, Product as TicProduct, TicBase as _,
 };
+use crate::commands::{command_loop, control_loop};
 
 extern crate alloc;
 
@@ -79,169 +81,152 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timer0.timer0);
     info!("Embassy initialized!");
 
-    let sda = peripherals.GPIO18;
-    let scl = peripherals.GPIO19;
+    let (sda, scl) = (peripherals.GPIO18, peripherals.GPIO19);
+    let i2c0 = peripherals.I2C0;
+    let (tx_pin, rx_pin) = (peripherals.GPIO1, peripherals.GPIO3);
+    let uart0 = peripherals.UART0;
 
     let _ = spawner;
 
-    let i2c_bus = I2c::new(
-        peripherals.I2C0,
-        esp_hal::i2c::master::Config::default().with_timeout(i2c::master::BusTimeout::Maximum),
-    )
-    .unwrap()
-    .with_sda(sda)
-    .with_scl(scl)
-    .into_async();
-    let i2c_bus = RefCell::new(i2c_bus);
-
-    let mut motor_horizontal = TicI2C::new_with_address(
-        RefCellDevice::new(&i2c_bus),
-        TicProduct::Tic36v4,
-        NoDelay,
-        14,
-    );
-    let mut motor_vertical = TicI2C::new_with_address(
-        RefCellDevice::new(&i2c_bus),
-        TicProduct::Tic36v4,
-        NoDelay,
-        15,
-    );
-
-    let mut accelerometer = Mma8x5x::new_mma8451(
-        RefCellDevice::new(&i2c_bus),
-        mma8x5x::SlaveAddr::Alternative(true),
-    );
-    let _ = accelerometer.disable_auto_sleep();
-    let _ = accelerometer.set_scale(GScale::G2);
-    let _ = accelerometer.set_data_rate(OutputDataRate::Hz50);
-    let _ = accelerometer.set_wake_power_mode(PowerMode::HighResolution);
-    let _ = accelerometer.set_read_mode(mma8x5x::ReadMode::Normal);
-    let _ = accelerometer.set_offset_correction(
-        ACC_OFFSET_X as i8,
-        ACC_OFFSET_Y as i8,
-        ACC_OFFSET_Z as i8,
-    );
-
-    let (tx_pin, rx_pin) = (peripherals.GPIO1, peripherals.GPIO3);
-    let config = esp_hal::uart::Config::default().with_rx(
-        esp_hal::uart::RxConfig::with_fifo_full_threshold(Default::default(), 64),
-    );
-
-    let mut uart0 = esp_hal::uart::Uart::new(peripherals.UART0, config)
-        .unwrap()
-        .with_tx(tx_pin)
-        .with_rx(rx_pin)
-        .into_async();
-
-    uart0.set_at_cmd(esp_hal::uart::AtCmdConfig::default().with_cmd_char(0x04));
-
-    let mut accelerometer = if let Ok(a) = accelerometer.into_active() {
-        info!("MMA8451 set up!!");
-        Some(a)
-    } else {
-        None
+    // todo!("Spawn threads for the command loop and control loop");
+    let status = Status {
+        calibration_status: CalibrationStatus::Uncalibrated,
+        vertical_speed: 0,
+        horizontal_speed: 0,
+        // vertical_speed: motor_vertical.max_speed().unwrap(),
+        // horizontal_speed: motor_horizontal.max_speed().unwrap()
     };
 
-    setup_motor(&mut motor_horizontal, MotorAxis::Horizontal)
-        .expect("Horizontal motor setup error");
-    setup_motor(&mut motor_vertical, MotorAxis::Vertical).expect("Vertical motor setup error");
-    info!("Motors set up!!");
+    let position = Position {
+        vertical_position: 0.0,
+        horizontal_position: 0.0,
+        // vertical_position: motor_vertical.current_position().unwrap() as f32 / STEPS_PER_DEGREE_VERTICAL as f32,
+        // horizontal_position: motor_horizontal.current_position().unwrap() as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32,
+    };
 
-    let is_calibrated = false;
+    let status = Arc::new(RwLock::new(status));
+    let position = Arc::new(RwLock::new(position));
+    let command_channel = Channel::<CriticalSectionRawMutex, Control, 50>::new();
+    let command_send = command_channel.sender();
+    let command_recv = command_channel.receiver();
+    let e_stop_channel = Channel::<CriticalSectionRawMutex, Control, 1>::new();
+    let e_stop_send = e_stop_channel.sender();
+    let e_stop_recv = e_stop_channel.receiver();
+    
+    control_loop(sda, scl, i2c0, command_recv, e_stop_recv, position.clone(), status.clone()).await;
+    command_loop(tx_pin, rx_pin, uart0, position.clone(), status.clone(), command_send, e_stop_send).await;
 
-    let mut buffer = [0; 1];
-    let mut command_string = String::new();
 
-    let mut timer = Instant::now();
 
-    loop {
-        if timer.elapsed() > Duration::from_millis(100) {
-            while motor_horizontal.reset_command_timeout().is_err() {
-                error!("Horizontal motor communication failure, attempting reconnection");
-                motor_horizontal = TicI2C::new_with_address(
-                    RefCellDevice::new(&i2c_bus),
-                    TicProduct::Tic36v4,
-                    NoDelay,
-                    14,
-                );
+//     let mut timer = Instant::now();
+//
+//     loop {
+//         if timer.elapsed() > Duration::from_millis(100) {
+//             while motor_horizontal.reset_command_timeout().is_err() {
+//                 error!("Horizontal motor communication failure, attempting reconnection");
+//                 motor_horizontal = TicI2C::new_with_address(
+//                     RefCellDevice::new(&i2c_bus),
+//                     TicProduct::Tic36v4,
+//                     NoDelay,
+//                     14,
+//                 );
+//
+//                 let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
+//                 Timer::after(Duration::from_secs(1)).await;
+//             }
+//
+//             while motor_vertical.reset_command_timeout().is_err() {
+//                 error!("Vertical motor communication failure, attempting reconnection");
+//                 motor_vertical = TicI2C::new_with_address(
+//                     RefCellDevice::new(&i2c_bus),
+//                     TicProduct::Tic36v4,
+//                     NoDelay,
+//                     15,
+//                 );
+//
+//                 let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
+//                 Timer::after(Duration::from_secs(1)).await;
+//             }
+//
+//             timer = Instant::now();
+//         }
+//     }
+}
 
-                let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
-                Timer::after(Duration::from_secs(1)).await;
-            }
+#[derive(Clone, Copy, PartialEq, Eq, Display)]
+pub enum CalibrationStatus {
+    Calibrated,
+    Calibrating,
+    Uncalibrated,
+}
 
-            while motor_vertical.reset_command_timeout().is_err() {
-                error!("Vertical motor communication failure, attempting reconnection");
-                motor_vertical = TicI2C::new_with_address(
-                    RefCellDevice::new(&i2c_bus),
-                    TicProduct::Tic36v4,
-                    NoDelay,
-                    15,
-                );
+#[derive(Clone, Copy)]
+pub struct Status {
+    calibration_status: CalibrationStatus,
+    vertical_speed: u32,
+    horizontal_speed: u32,
+}
 
-                let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
-                Timer::after(Duration::from_secs(1)).await;
-            }
+impl Status {
+    fn calibration_status(mut self, calibration_status: CalibrationStatus) {
+        self.calibration_status = calibration_status;
+    }
 
-            timer = Instant::now();
-        }
-
-        let Ok(count) = uart0.read_buffered(&mut buffer) else {
-            continue;
-        };
-
-        // If there were no bytes read, don't try to use them
-        if count == 0 {
-            continue;
-        }
-
-        if buffer[0] == b'\x1B' {
-            command_string.clear();
-            match parse_command(
-                &mut motor_vertical,
-                &mut motor_horizontal,
-                &mut accelerometer,
-                "HALT ",
-                is_calibrated,
-            )
-            .await
-            {
-                Ok(_) => print!("OK SOFTWARE E-STOP (ESC RECIEVED)\n"),
-                Err(e) => print!("ERR: {:?}, {}\n", e, e),
-            }
-            continue;
-        }
-
-        if buffer[0] == b'\r' || buffer[0] == b'\n' {
-            println!();
-            command_string += " ";
-
-            match parse_command(
-                &mut motor_vertical,
-                &mut motor_horizontal,
-                &mut accelerometer,
-                &command_string,
-                is_calibrated,
-            )
-            .await
-            {
-                Ok(s) => print!("OK {}\n", s),
-                Err(e) => print!("ERR: {:?}, {}\n", e, e),
-            }
-
-            command_string.clear();
-        } else if buffer[0] == b'\x08' {
-            if !command_string.is_empty() {
-                command_string.remove(command_string.len() - 1);
-                print!("\x08 \x08");
-            }
-        } else if buffer[0] != 0xFF {
-            print!("{}", buffer[0] as char);
-            command_string.push(buffer[0] as char);
+    fn set_speed(mut self, motor_axis: MotorAxis, speed: u32) {
+        if motor_axis == MotorAxis::Vertical {
+            self.vertical_speed = speed;
+        } else if motor_axis == MotorAxis::Horizontal {
+            self.horizontal_speed = speed;
+        } else {
+            warn!("Invalid motor axis provided to set_speed: {:?}", motor_axis);
         }
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct Position {
+    vertical_position: f32,
+    horizontal_position: f32,
+}
+
+impl Position {
+    fn set_position(mut self, motor_axis: MotorAxis, position: f32) {
+        if motor_axis == MotorAxis::Vertical {
+            self.vertical_position = position;
+        } else if motor_axis == MotorAxis::Horizontal {
+            self.horizontal_position = position;
+        } else {
+            warn!(
+                "Invalid motor axis provided to set_position: {:?}",
+                motor_axis
+            );
+        }
+    }
+}
+
+#[allow(non_camel_case_types)]
+pub enum Control {
+    DVER(f32),
+    DHOR(f32),
+    CALV,
+    CALV_SET,
+    CALH,
+    MOVC_UP,
+    MOVC_DN,
+    MOVC_LT,
+    MOVC_RT,
+    MOVC_SV,
+    MOVC_SH,
+    MOVV(f32),
+    MOVH(f32),
+    SSPD,
+    SSPD_VER,
+    SSPD_HOR,
+    HALT,
+}
+
 #[derive(PartialEq, Eq)]
+#[derive(Debug)]
 enum MotorAxis {
     Horizontal,
     Vertical,
