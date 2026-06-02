@@ -212,7 +212,7 @@ pub struct Position {
 }
 
 impl Position {
-    fn set_position(mut self, motor_axis: MotorAxis, position: f32) {
+    fn set_position(&mut self, motor_axis: MotorAxis, position: f32) {
         if motor_axis == MotorAxis::Vertical {
             self.vertical_position = position;
         } else if motor_axis == MotorAxis::Horizontal {
