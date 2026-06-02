@@ -190,11 +190,11 @@ pub struct Status {
 }
 
 impl Status {
-    fn calibration_status(mut self, calibration_status: CalibrationStatus) {
+    fn calibration_status(&mut self, calibration_status: CalibrationStatus) {
         self.calibration_status = calibration_status;
     }
 
-    fn set_speed(mut self, motor_axis: MotorAxis, speed: u32) {
+    fn set_speed(&mut self, motor_axis: MotorAxis, speed: u32) {
         if motor_axis == MotorAxis::Vertical {
             self.vertical_speed = speed;
         } else if motor_axis == MotorAxis::Horizontal {
