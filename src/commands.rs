@@ -42,8 +42,8 @@ pub enum ParseErr {
     InternalError(#[from] pololu_tic::HandlerError),
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
-    #[error("The acceleromter was not found. Use CALV SET instead")]
-    NoAccel,
+    // #[error("The acceleromter was not found. Use CALV SET instead")]
+    // NoAccel,
 }
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
@@ -580,6 +580,10 @@ pub async fn parse_command(
                 status.read().await.horizontal_speed
             ));
         }
+        "GERR" => match status.write().await.get_error() {
+            None => {}
+            Some(error) => return Ok(error.to_string()),
+        },
         "HALT" => {
             e_stop_send.send(Control::HALT).await;
         }

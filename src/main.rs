@@ -225,10 +225,6 @@ impl Status {
     fn get_error(&mut self) -> Option<TicHandlerError> {
         self.error.pop_front()
     }
-
-    fn peek_error(&self) -> Option<&TicHandlerError> {
-        self.error.front()
-    }
 }
 
 #[derive(Clone, Copy)]
