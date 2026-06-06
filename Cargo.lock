@@ -10,7 +10,7 @@ checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 
 [[package]]
 name = "archer"
-version = "2.0.0-alpha.1"
+version = "2.0.0-alpha.2"
 dependencies = [
  "cargo_metadata",
  "derive_more",
@@ -1132,9 +1132,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pololu_tic"
-version = "0.2.0-beta.7"
+version = "0.2.0-beta.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02396438f8eed90c3d5c45003b9a9b3ea512dc10cd05576befa1f65d4fe2e956"
+checksum = "b96712855d2f8f606d707d2d0403fc7e9ef29857570a9ebbd26a37cf36232a4e"
 dependencies = [
  "embedded-hal 1.0.0",
  "num-derive",

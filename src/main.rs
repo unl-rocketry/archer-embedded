@@ -3,6 +3,7 @@
 
 mod commands;
 
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use derive_more::Display;
 use esp_backtrace as _;
@@ -96,6 +97,7 @@ async fn main(spawner: Spawner) {
         calibration_status: CalibrationStatus::Uncalibrated,
         vertical_speed: 0,
         horizontal_speed: 0,
+        error: VecDeque::new(),
         // vertical_speed: motor_vertical.max_speed().unwrap(),
         // horizontal_speed: motor_horizontal.max_speed().unwrap()
     };
@@ -182,11 +184,12 @@ pub enum CalibrationStatus {
     Uncalibrated,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Status {
     calibration_status: CalibrationStatus,
     vertical_speed: u32,
     horizontal_speed: u32,
+    error: VecDeque<TicHandlerError>,
 }
 
 impl Status {
@@ -202,6 +205,18 @@ impl Status {
         } else {
             warn!("Invalid motor axis provided to set_speed: {:?}", motor_axis);
         }
+    }
+
+    fn add_error(&mut self, error: TicHandlerError) {
+        self.error.push_back(error);
+    }
+
+    fn get_error(&mut self) -> Option<TicHandlerError> {
+        self.error.pop_front()
+    }
+
+    fn peek_error(&self) -> Option<&TicHandlerError>  {
+        self.error.front()
     }
 }
 
@@ -258,7 +273,7 @@ enum MotorAxis {
 fn calculate_pitch<I: embedded_hal::i2c::I2c>(
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
 ) -> f32 {
-    let data = accel.read().unwrap();
+    let data = accel.read().expect("Failed to read accelerometer data");
     let x = data.y;
     let y = data.x;
     let z = data.z;
@@ -298,12 +313,12 @@ fn setup_motor<I: embedded_hal::i2c::I2c>(
 async fn calibrate_vertical<I: embedded_hal::i2c::I2c>(
     motor: &mut TicI2C<I, NoDelay>,
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
-) {
+) -> Result<(), TicHandlerError> {
     const ZERO_CAL: f64 = 0.2;
     let mut target_velocity: i32;
-    motor.set_max_decel(5000000).unwrap();
-    motor.set_max_accel(5000000).unwrap();
-    motor.set_step_mode(TicStepMode::Microstep8).unwrap();
+    motor.set_max_decel(5000000)?;
+    motor.set_max_accel(5000000)?;
+    motor.set_step_mode(TicStepMode::Microstep8)?;
 
     //find zero
     loop {
@@ -330,19 +345,20 @@ async fn calibrate_vertical<I: embedded_hal::i2c::I2c>(
         }
 
         if pitch_sum <= -0.02 {
-            motor.set_target_velocity(target_velocity).unwrap();
+            motor.set_target_velocity(target_velocity)?;
         } else if pitch_sum >= 0.02 {
-            motor.set_target_velocity(-target_velocity).unwrap();
+            motor.set_target_velocity(-target_velocity)?;
         } else {
-            motor.halt_and_set_position(0).unwrap();
+            motor.halt_and_set_position(0)?;
             break;
         }
         Timer::after(Duration::from_millis(200)).await;
-        motor.set_target_velocity(0).unwrap();
+        motor.set_target_velocity(0)?;
     }
-    motor.set_max_decel(TIC_DECEL_DEFAULT_VERTICAL).unwrap();
-    motor.set_max_accel(TIC_DECEL_DEFAULT_VERTICAL).unwrap();
-    motor.set_step_mode(DEFAULT_STEP_MODE_VERTICAL).unwrap();
+    motor.set_max_decel(TIC_DECEL_DEFAULT_VERTICAL)?;
+    motor.set_max_accel(TIC_DECEL_DEFAULT_VERTICAL)?;
+    motor.set_step_mode(DEFAULT_STEP_MODE_VERTICAL)?;
+    Ok(())
 }
 
 /// Calculate most optimal difference in current and destination angle
@@ -357,7 +373,7 @@ fn get_delta_angle(curr_angle: f32, new_angle: f32) -> f32 {
 
 fn get_relative_angle<I: embedded_hal::i2c::I2c>(motor: &mut TicI2C<I, NoDelay>) -> f32 {
     let mut curr_angle: f32 =
-        motor.current_position().unwrap() as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
+        motor.current_position().expect("Unable to get current motor position to calculate relative angle") as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
 
     while curr_angle > 180.0 {
         curr_angle -= 360.0;
