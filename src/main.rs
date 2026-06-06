@@ -7,12 +7,9 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use derive_more::Display;
 use esp_backtrace as _;
-use esp_hal::{
-    clock::CpuClock,
-    interrupt::software::SoftwareInterruptControl,
-    system::{Stack}
-};
+use esp_hal::{clock::CpuClock, interrupt::software::SoftwareInterruptControl, system::Stack};
 
+use crate::commands::{command_loop, control_loop};
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -26,7 +23,6 @@ use pololu_tic::variables::StepMode as TicStepMode;
 use pololu_tic::{
     HandlerError as TicHandlerError, I2c as TicI2C, Product as TicProduct, TicBase as _,
 };
-use crate::commands::{command_loop, control_loop};
 use static_cell::StaticCell;
 
 extern crate alloc;
@@ -129,52 +125,67 @@ async fn main(spawner: Spawner) {
         move || {
             static EXECUTOR: StaticCell<Executor> = StaticCell::new();
             let executor = EXECUTOR.init(Executor::new());
-        executor.run(|spawner| {
-                spawner.spawn(control_loop(sda, scl, i2c0, command_recv, e_stop_recv, position_clone, status_clone)).unwrap();
+            executor.run(|spawner| {
+                spawner
+                    .spawn(control_loop(
+                        sda,
+                        scl,
+                        i2c0,
+                        command_recv,
+                        e_stop_recv,
+                        position_clone,
+                        status_clone,
+                    ))
+                    .unwrap();
             });
         },
     );
 
     // spawner.spawn(control_loop(sda, scl, i2c0, command_recv, e_stop_recv, position.clone(), status.clone())).unwrap();
-    command_loop(tx_pin, rx_pin, uart0, position.clone(), status.clone(), command_send, e_stop_send).await;
+    command_loop(
+        tx_pin,
+        rx_pin,
+        uart0,
+        position.clone(),
+        status.clone(),
+        command_send,
+        e_stop_send,
+    )
+    .await;
 
-
-
-
-
-//     let mut timer = Instant::now();
-//
-//     loop {
-//         if timer.elapsed() > Duration::from_millis(100) {
-//             while motor_horizontal.reset_command_timeout().is_err() {
-//                 error!("Horizontal motor communication failure, attempting reconnection");
-//                 motor_horizontal = TicI2C::new_with_address(
-//                     RefCellDevice::new(&i2c_bus),
-//                     TicProduct::Tic36v4,
-//                     NoDelay,
-//                     14,
-//                 );
-//
-//                 let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
-//                 Timer::after(Duration::from_secs(1)).await;
-//             }
-//
-//             while motor_vertical.reset_command_timeout().is_err() {
-//                 error!("Vertical motor communication failure, attempting reconnection");
-//                 motor_vertical = TicI2C::new_with_address(
-//                     RefCellDevice::new(&i2c_bus),
-//                     TicProduct::Tic36v4,
-//                     NoDelay,
-//                     15,
-//                 );
-//
-//                 let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
-//                 Timer::after(Duration::from_secs(1)).await;
-//             }
-//
-//             timer = Instant::now();
-//         }
-//     }
+    //     let mut timer = Instant::now();
+    //
+    //     loop {
+    //         if timer.elapsed() > Duration::from_millis(100) {
+    //             while motor_horizontal.reset_command_timeout().is_err() {
+    //                 error!("Horizontal motor communication failure, attempting reconnection");
+    //                 motor_horizontal = TicI2C::new_with_address(
+    //                     RefCellDevice::new(&i2c_bus),
+    //                     TicProduct::Tic36v4,
+    //                     NoDelay,
+    //                     14,
+    //                 );
+    //
+    //                 let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
+    //                 Timer::after(Duration::from_secs(1)).await;
+    //             }
+    //
+    //             while motor_vertical.reset_command_timeout().is_err() {
+    //                 error!("Vertical motor communication failure, attempting reconnection");
+    //                 motor_vertical = TicI2C::new_with_address(
+    //                     RefCellDevice::new(&i2c_bus),
+    //                     TicProduct::Tic36v4,
+    //                     NoDelay,
+    //                     15,
+    //                 );
+    //
+    //                 let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
+    //                 Timer::after(Duration::from_secs(1)).await;
+    //             }
+    //
+    //             timer = Instant::now();
+    //         }
+    //     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Display)]
@@ -215,7 +226,7 @@ impl Status {
         self.error.pop_front()
     }
 
-    fn peek_error(&self) -> Option<&TicHandlerError>  {
+    fn peek_error(&self) -> Option<&TicHandlerError> {
         self.error.front()
     }
 }
@@ -262,8 +273,7 @@ pub enum Control {
     HALT,
 }
 
-#[derive(PartialEq, Eq)]
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 enum MotorAxis {
     Horizontal,
     Vertical,
@@ -372,8 +382,11 @@ fn get_delta_angle(curr_angle: f32, new_angle: f32) -> f32 {
 }
 
 fn get_relative_angle<I: embedded_hal::i2c::I2c>(motor: &mut TicI2C<I, NoDelay>) -> f32 {
-    let mut curr_angle: f32 =
-        motor.current_position().expect("Unable to get current motor position to calculate relative angle") as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
+    let mut curr_angle: f32 = motor
+        .current_position()
+        .expect("Unable to get current motor position to calculate relative angle")
+        as f32
+        / STEPS_PER_DEGREE_HORIZONTAL as f32;
 
     while curr_angle > 180.0 {
         curr_angle -= 360.0;

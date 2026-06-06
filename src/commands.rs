@@ -1,26 +1,30 @@
-use crate::{setup_motor, TicProduct, ACC_OFFSET_X, ACC_OFFSET_Y, ACC_OFFSET_Z};
-use crate::{calibrate_vertical, get_delta_angle, get_relative_angle, CalibrationStatus, Control, MotorAxis, Position, Status, SPEED_DEFAULT_HORIZONTAL, SPEED_DEFAULT_VERTICAL, SPEED_MAX_HORIZONTAL, SPEED_MAX_VERTICAL, STEPS_PER_DEGREE_HORIZONTAL, STEPS_PER_DEGREE_VERTICAL};
+use crate::{ACC_OFFSET_X, ACC_OFFSET_Y, ACC_OFFSET_Z, TicProduct, setup_motor};
+use crate::{
+    CalibrationStatus, Control, MotorAxis, Position, SPEED_DEFAULT_HORIZONTAL,
+    SPEED_DEFAULT_VERTICAL, SPEED_MAX_HORIZONTAL, SPEED_MAX_VERTICAL, STEPS_PER_DEGREE_HORIZONTAL,
+    STEPS_PER_DEGREE_VERTICAL, Status, calibrate_vertical, get_delta_angle, get_relative_angle,
+};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
-use embassy_futures::select::{select, Either};
+use core::cell::RefCell;
+use core::iter::Peekable;
+use core::str::SplitWhitespace;
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::rwlock::RwLock;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_hal_bus::i2c::RefCellDevice;
 use embedded_hal_bus::spi::NoDelay;
-use esp_hal::uart::Uart;
-use esp_hal::{i2c};
+use esp_hal::i2c;
 use esp_hal::i2c::master::I2c;
+use esp_hal::peripherals::{GPIO1, GPIO3, GPIO18, GPIO19, I2C0, UART0};
+use esp_hal::uart::Uart;
 use esp_println::{print, println};
 use log::{error, info};
 use mma8x5x::{GScale, Mma8x5x, OutputDataRate, PowerMode};
 use pololu_tic::{I2c as TicI2C, TicBase};
-use core::cell::RefCell;
-use core::iter::Peekable;
-use core::str::SplitWhitespace;
-use esp_hal::peripherals::{GPIO1, GPIO18, GPIO19, GPIO3, I2C0, UART0};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErr {
@@ -58,10 +62,10 @@ pub async fn control_loop(
         i2c0,
         i2c::master::Config::default().with_timeout(i2c::master::BusTimeout::Maximum),
     )
-        .expect("I2c device creation error")
-        .with_sda(sda)
-        .with_scl(scl)
-        .into_async();
+    .expect("I2c device creation error")
+    .with_sda(sda)
+    .with_scl(scl)
+    .into_async();
     let i2c_bus = RefCell::new(i2c_bus);
 
     let mut motor_horizontal = TicI2C::new_with_address(
@@ -104,7 +108,6 @@ pub async fn control_loop(
     setup_motor(&mut motor_vertical, MotorAxis::Vertical).expect("Vertical motor setup error");
     info!("Motors set up!!");
 
-
     if let (Ok(speed_v), Ok(speed_h)) = (motor_vertical.max_speed(), motor_horizontal.max_speed()) {
         let mut stat = status.write().await;
         stat.vertical_speed = speed_v;
@@ -112,13 +115,15 @@ pub async fn control_loop(
         drop(stat);
     };
 
-    if let (Ok(pos_v), Ok(pos_h)) = (motor_vertical.current_position(), motor_horizontal.current_position()) {
+    if let (Ok(pos_v), Ok(pos_h)) = (
+        motor_vertical.current_position(),
+        motor_horizontal.current_position(),
+    ) {
         let mut pos = position.write().await;
         pos.vertical_position = pos_v as f32 / STEPS_PER_DEGREE_VERTICAL as f32;
         pos.horizontal_position = pos_h as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32;
         drop(pos);
     }
-
 
     let mut position_clock = Timer::after(Duration::from_millis(200));
     let mut timer = Instant::now();
@@ -158,11 +163,11 @@ pub async fn control_loop(
                 if !e_stop_channel.is_empty() {
                     match motor_vertical.halt_and_hold() {
                         Ok(_) => {}
-                        Err(e) => status.write().await.add_error(e)
+                        Err(e) => status.write().await.add_error(e),
                     };
                     match motor_horizontal.halt_and_hold() {
                         Ok(_) => {}
-                        Err(e) => status.write().await.add_error(e)
+                        Err(e) => status.write().await.add_error(e),
                     };
                     e_stop_channel.clear();
                 }
@@ -170,143 +175,161 @@ pub async fn control_loop(
                     Control::DVER(x) => {
                         let target_pos = x.clamp(0.0, 90.0);
 
-                        match motor_vertical.set_target_position((target_pos * STEPS_PER_DEGREE_VERTICAL as f32) as i32) {
+                        match motor_vertical.set_target_position(
+                            (target_pos * STEPS_PER_DEGREE_VERTICAL as f32) as i32,
+                        ) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         }
                     }
                     Control::DHOR(x) => {
                         let target_pos = x.clamp(-180.0, 180.0);
-                        let angle_steps = get_delta_angle(get_relative_angle(&mut motor_horizontal), target_pos)
-                            * STEPS_PER_DEGREE_HORIZONTAL as f32;
+                        let angle_steps =
+                            get_delta_angle(get_relative_angle(&mut motor_horizontal), target_pos)
+                                * STEPS_PER_DEGREE_HORIZONTAL as f32;
                         if let Ok(current_pos) = motor_horizontal.current_position() {
                             let move_to = current_pos as f32 + angle_steps;
                             match motor_horizontal.set_target_position(move_to as i32) {
                                 Ok(_) => {}
-                                Err(e) => status.write().await.add_error(e)
+                                Err(e) => status.write().await.add_error(e),
                             };
                         }
                     }
                     Control::CALV => {
                         if let Some(accel) = &mut accel {
-                            status.write().await.calibration_status(CalibrationStatus::Calibrating);
+                            status
+                                .write()
+                                .await
+                                .calibration_status(CalibrationStatus::Calibrating);
                             match calibrate_vertical(&mut motor_vertical, accel).await {
                                 Ok(_) => {}
-                                Err(e) => {status.write().await.add_error(e)}
+                                Err(e) => status.write().await.add_error(e),
                             }
-                            status.write().await.calibration_status(CalibrationStatus::Calibrated);
+                            status
+                                .write()
+                                .await
+                                .calibration_status(CalibrationStatus::Calibrated);
                         } else {
                             todo!()
                             // status.write().await.add_error(ParseErr::NoAccel);
                         }
-                    },
+                    }
                     Control::CALV_SET => {
                         match motor_vertical.halt_and_set_position(0) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                        status.write().await.calibration_status(CalibrationStatus::Calibrated);
-                    },
+                        status
+                            .write()
+                            .await
+                            .calibration_status(CalibrationStatus::Calibrated);
+                    }
                     Control::CALH => {
                         match motor_horizontal.halt_and_set_position(0) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVC_UP => {
                         match motor_vertical.set_target_velocity(SPEED_DEFAULT_HORIZONTAL / 2) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVC_DN => {
                         match motor_vertical.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL / 2) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVC_LT => {
                         match motor_horizontal.set_target_velocity(SPEED_DEFAULT_HORIZONTAL / 2) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVC_RT => {
                         match motor_horizontal.set_target_velocity(-SPEED_DEFAULT_HORIZONTAL / 2) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVC_SV => {
                         match motor_vertical.set_target_velocity(0) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVC_SH => {
                         match motor_horizontal.set_target_velocity(0) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::MOVV(x) => {
                         let steps_to_move = x;
                         if let Ok(current_position) = motor_vertical.current_position() {
                             let move_to = current_position as f32 + steps_to_move;
                             match motor_vertical.set_target_position(move_to as i32) {
-                            Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
-                        };
+                                Ok(_) => {}
+                                Err(e) => status.write().await.add_error(e),
+                            };
                         }
-                    },
+                    }
                     Control::MOVH(x) => {
                         let steps_to_move = x;
                         if let Ok(current_position) = motor_horizontal.current_position() {
                             let move_to = current_position as f32 - steps_to_move;
                             match motor_horizontal.set_target_position(move_to as i32) {
-                            Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
-                        };
+                                Ok(_) => {}
+                                Err(e) => status.write().await.add_error(e),
+                            };
                         }
-                    },
+                    }
                     Control::SSPD => {
                         //Handles SSPD and SSPD_RST because the command parsing updates status with the correct values for both and the code to apply it is the same.
                         match motor_vertical.set_max_speed(status.read().await.vertical_speed) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
                         match motor_horizontal.set_max_speed(status.read().await.horizontal_speed) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::SSPD_VER => {
                         match motor_vertical.set_max_speed(status.read().await.vertical_speed) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::SSPD_HOR => {
                         match motor_horizontal.set_max_speed(status.read().await.horizontal_speed) {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
-                    },
+                    }
                     Control::HALT => {
                         match motor_vertical.halt_and_hold() {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
                         match motor_horizontal.halt_and_hold() {
                             Ok(_) => {}
-                            Err(e) => status.write().await.add_error(e)
+                            Err(e) => status.write().await.add_error(e),
                         };
                     }
                 }
             }
             Either::Second(()) => {
-                if let (Ok(pos_v), Ok(pos_h)) = (motor_vertical.current_position(),motor_horizontal.current_position()) {
-                    let (pos_v, pos_h) = (pos_v as f32 / STEPS_PER_DEGREE_VERTICAL as f32, pos_h as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32);
+                if let (Ok(pos_v), Ok(pos_h)) = (
+                    motor_vertical.current_position(),
+                    motor_horizontal.current_position(),
+                ) {
+                    let (pos_v, pos_h) = (
+                        pos_v as f32 / STEPS_PER_DEGREE_VERTICAL as f32,
+                        pos_h as f32 / STEPS_PER_DEGREE_HORIZONTAL as f32,
+                    );
                     let mut position = position.write().await;
                     position.set_position(MotorAxis::Vertical, pos_v);
                     position.set_position(MotorAxis::Horizontal, pos_h);
@@ -319,14 +342,14 @@ pub async fn control_loop(
     }
 }
 
-pub async fn command_loop (
+pub async fn command_loop(
     tx_pin: GPIO1<'_>,
     rx_pin: GPIO3<'_>,
     uart0: UART0<'_>,
     position: Arc<RwLock<CriticalSectionRawMutex, Position>>,
     status: Arc<RwLock<CriticalSectionRawMutex, Status>>,
     command_send: Sender<'_, CriticalSectionRawMutex, Control, 50>,
-    e_stop_send: Sender<'_, CriticalSectionRawMutex, Control, 1>
+    e_stop_send: Sender<'_, CriticalSectionRawMutex, Control, 1>,
 ) {
     let config = esp_hal::uart::Config::default().with_rx(
         esp_hal::uart::RxConfig::with_fifo_full_threshold(Default::default(), 64),
@@ -378,28 +401,24 @@ pub async fn command_loop (
                 command_send,
                 e_stop_send,
                 &command_string,
-            ).await
+            )
+            .await
             {
                 Ok(s) => print!("OK {}\n", s),
                 Err(e) => print!("ERR: {:?}, {}\n", e, e),
             }
 
             command_string.clear();
-
         } else if buffer[0] == b'\x08' {
             if !command_string.is_empty() {
                 command_string.remove(command_string.len() - 1);
                 print!("\x08 \x08");
             }
-
         } else if buffer[0] != 0xFF {
             print!("{}", buffer[0] as char);
             command_string.push(buffer[0] as char);
         }
     }
-
-
-
 }
 
 pub async fn parse_command(
@@ -407,7 +426,7 @@ pub async fn parse_command(
     status: &Arc<RwLock<CriticalSectionRawMutex, Status>>,
     command_channel: Sender<'_, CriticalSectionRawMutex, Control, 50>,
     e_stop_send: Sender<'_, CriticalSectionRawMutex, Control, 1>,
-    input: &str
+    input: &str,
 ) -> Result<String, ParseErr> {
     let input = input.to_ascii_uppercase();
     let mut arguments = input.split_whitespace().peekable();
@@ -433,7 +452,7 @@ pub async fn parse_command(
             }
             _ => {
                 command_channel.send(Control::CALV).await;
-            },
+            }
         },
         "CALH" => {
             command_channel.send(Control::CALH).await;
@@ -467,8 +486,6 @@ pub async fn parse_command(
             let steps_to_move = arg_to_f32(arguments)?;
             command_channel.send(Control::MOVH(steps_to_move)).await;
         }
-
-
 
         "GETP" => {
             let position: Position = *position.read().await;
@@ -513,17 +530,29 @@ pub async fn parse_command(
         "SSPD" => match arguments.next() {
             Some("VER") => {
                 let new_speed = arg_to_f32(arguments)?;
-                status.write().await.set_speed(MotorAxis::Vertical, new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32);
+                status.write().await.set_speed(
+                    MotorAxis::Vertical,
+                    new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32,
+                );
                 command_channel.send(Control::SSPD_VER).await;
             }
             Some("HOR") => {
                 let new_speed = arg_to_f32(arguments)?;
-                status.write().await.set_speed(MotorAxis::Horizontal, new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32);
+                status.write().await.set_speed(
+                    MotorAxis::Horizontal,
+                    new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32,
+                );
                 command_channel.send(Control::SSPD_HOR).await;
             }
             Some("RST") => {
-                status.write().await.set_speed(MotorAxis::Vertical, SPEED_DEFAULT_VERTICAL as u32);
-                status.write().await.set_speed(MotorAxis::Horizontal, SPEED_DEFAULT_HORIZONTAL as u32);
+                status
+                    .write()
+                    .await
+                    .set_speed(MotorAxis::Vertical, SPEED_DEFAULT_VERTICAL as u32);
+                status
+                    .write()
+                    .await
+                    .set_speed(MotorAxis::Horizontal, SPEED_DEFAULT_HORIZONTAL as u32);
                 command_channel.send(Control::SSPD).await;
             }
             Some(int) => {
@@ -532,8 +561,14 @@ pub async fn parse_command(
                     Err(_) => Err(ParseErr::TooFewArguments)?,
                 };
 
-                status.write().await.set_speed(MotorAxis::Vertical, new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32);
-                status.write().await.set_speed(MotorAxis::Horizontal, new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32);
+                status.write().await.set_speed(
+                    MotorAxis::Vertical,
+                    new_speed.clamp(0.0, SPEED_MAX_VERTICAL as f32) as u32,
+                );
+                status.write().await.set_speed(
+                    MotorAxis::Horizontal,
+                    new_speed.clamp(0.0, SPEED_MAX_HORIZONTAL as f32) as u32,
+                );
                 command_channel.send(Control::SSPD).await;
             }
             _ => return Err(ParseErr::InvalidArgument),
