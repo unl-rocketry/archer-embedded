@@ -79,7 +79,7 @@ async fn main(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: 72 * 1024);
     esp_println::logger::init_logger_from_env();
     let timer0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1);
-    esp_rtos::start(timer0.timer0);
+    esp_rtos::start(timer0.timer0, sw_int.software_interrupt0);
     info!("Embassy initialized!");
 
     let (sda, scl) = (peripherals.GPIO18, peripherals.GPIO19);
@@ -119,7 +119,6 @@ async fn main(spawner: Spawner) {
 
     esp_rtos::start_second_core(
         peripherals.CPU_CTRL,
-        sw_int.software_interrupt0,
         sw_int.software_interrupt1,
         app_core_stack,
         move || {
@@ -135,8 +134,8 @@ async fn main(spawner: Spawner) {
                         e_stop_recv,
                         position_clone,
                         status_clone,
-                    ))
-                    .unwrap();
+                    )
+                    .unwrap())
             });
         },
     );
