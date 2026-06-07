@@ -42,8 +42,8 @@ pub enum ParseErr {
     InternalError(#[from] pololu_tic::HandlerError),
     #[error("the vertical position has not been calibrated.")]
     Uncalibrated,
-    // #[error("The acceleromter was not found. Use CALV SET instead")]
-    // NoAccel,
+    #[error("The acceleromter was not found. Use CALV SET instead")]
+    NoAccel,
 }
 
 const BLACKLIST: &[&str] = &["DVER", "DHOR"];
@@ -103,9 +103,12 @@ pub async fn control_loop(
         None
     };
 
-    setup_motor(&mut motor_horizontal, MotorAxis::Horizontal)
-        .expect("Horizontal motor setup error");
-    setup_motor(&mut motor_vertical, MotorAxis::Vertical).expect("Vertical motor setup error");
+    if setup_motor(&mut motor_horizontal, MotorAxis::Horizontal).is_err() {
+        status.write().await.add_error_as_string("Horizontal motor setup error".to_string());
+    }
+    if setup_motor(&mut motor_vertical, MotorAxis::Vertical).is_err() {
+        status.write().await.add_error_as_string("Vertical motor setup error".to_string());
+    }
     info!("Motors set up!!");
 
     if let (Ok(speed_v), Ok(speed_h)) = (motor_vertical.max_speed(), motor_horizontal.max_speed()) {
@@ -127,6 +130,8 @@ pub async fn control_loop(
 
     let mut position_clock = Timer::after(Duration::from_millis(200));
     let mut timeout_clock = Timer::after(Duration::from_millis(100));
+    let mut motor_h_retry_attempt = 0;
+    let mut motor_v_retry_attempt = 0;
 
     loop {
         match select3(command_channel.receive(), &mut position_clock, &mut timeout_clock).await {
@@ -181,8 +186,7 @@ pub async fn control_loop(
                                 .await
                                 .calibration_status(CalibrationStatus::Calibrated);
                         } else {
-                            todo!()
-                            // status.write().await.add_error(ParseErr::NoAccel);
+                            status.write().await.add_error_as_string(ParseErr::NoAccel.to_string());
                         }
                     }
                     Control::CALV_SET => {
@@ -310,21 +314,37 @@ pub async fn control_loop(
                 position_clock = Timer::after(Duration::from_millis(200));
             }
             Either3::Third(()) => {
-                while motor_horizontal.reset_command_timeout().is_err() {
-                    error!("Horizontal motor communication failure, attempting reconnection");
+                if (motor_horizontal.reset_command_timeout().is_err() && !(motor_h_retry_attempt > 0)){
+                    // error!("Horizontal motor communication failure, attempting reconnection");
+                    status.write().await.add_error_as_string("Horizontal motor communication failure, attempting reconnection".to_string());
                     motor_horizontal = TicI2C::new_with_address(
                         RefCellDevice::new(&i2c_bus),
                         TicProduct::Tic36v4,
                         NoDelay,
                         14,
                     );
-
-                    let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
+                    if setup_motor(&mut motor_horizontal, MotorAxis::Horizontal).is_ok() {
+                        motor_h_retry_attempt = 0;
+                    }
+                    motor_h_retry_attempt += 1;
+                    Timer::after(Duration::from_secs(1)).await;
+                } else {
+                    motor_horizontal = TicI2C::new_with_address(
+                        RefCellDevice::new(&i2c_bus),
+                        TicProduct::Tic36v4,
+                        NoDelay,
+                        14,
+                    );
+                    if setup_motor(&mut motor_horizontal, MotorAxis::Horizontal).is_ok() {
+                        motor_h_retry_attempt = 0;
+                    }
+                    motor_h_retry_attempt += 1;
                     Timer::after(Duration::from_secs(1)).await;
                 }
 
-                while motor_vertical.reset_command_timeout().is_err() {
-                    error!("Vertical motor communication failure, attempting reconnection");
+                if (motor_vertical.reset_command_timeout().is_err() && !(motor_v_retry_attempt > 0)) {
+                    // error!("Vertical motor communication failure, attempting reconnection");
+                    status.write().await.add_error_as_string("Vertical motor communication failure, attempting reconnection".to_string());
                     motor_vertical = TicI2C::new_with_address(
                         RefCellDevice::new(&i2c_bus),
                         TicProduct::Tic36v4,
@@ -332,7 +352,21 @@ pub async fn control_loop(
                         15,
                     );
 
-                    let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
+                    if setup_motor(&mut motor_vertical, MotorAxis::Vertical).is_ok() {
+                        motor_v_retry_attempt = 0;
+                    }
+                    Timer::after(Duration::from_secs(1)).await;
+                } else {
+                    motor_vertical = TicI2C::new_with_address(
+                        RefCellDevice::new(&i2c_bus),
+                        TicProduct::Tic36v4,
+                        NoDelay,
+                        15,
+                    );
+
+                    if setup_motor(&mut motor_vertical, MotorAxis::Vertical).is_ok() {
+                        motor_v_retry_attempt = 0;
+                    }
                     Timer::after(Duration::from_secs(1)).await;
                 }
 
@@ -405,7 +439,7 @@ pub async fn command_loop(
             .await
             {
                 Ok(s) => print!("OK {}\n", s),
-                Err(e) => print!("ERR: {:?}, {}\n", e, e),
+                Err(e) => print!("ERR {:?}, {}\n", e, e),
             }
 
             command_string.clear();
@@ -582,7 +616,7 @@ pub async fn parse_command(
         }
         "GERR" => match status.write().await.get_error() {
             None => {}
-            Some(error) => return Ok(error.to_string()),
+            Some(error) => return Ok(error),
         },
         "HALT" => {
             e_stop_send.send(Control::HALT).await;

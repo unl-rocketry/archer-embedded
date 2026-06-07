@@ -4,6 +4,7 @@
 mod commands;
 
 use alloc::collections::VecDeque;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use derive_more::Display;
 use esp_backtrace as _;
@@ -199,7 +200,7 @@ pub struct Status {
     calibration_status: CalibrationStatus,
     vertical_speed: u32,
     horizontal_speed: u32,
-    error: VecDeque<TicHandlerError>,
+    error: VecDeque<String>,
 }
 
 impl Status {
@@ -218,10 +219,14 @@ impl Status {
     }
 
     fn add_error(&mut self, error: TicHandlerError) {
+        self.add_error_as_string(error.to_string());
+    }
+
+    fn add_error_as_string(&mut self, error: String) {
         self.error.push_back(error);
     }
 
-    fn get_error(&mut self) -> Option<TicHandlerError> {
+    fn get_error(&mut self) -> Option<String> {
         self.error.pop_front()
     }
 }
@@ -278,7 +283,7 @@ enum MotorAxis {
 fn calculate_pitch<I: embedded_hal::i2c::I2c>(
     accel: &mut Mma8x5x<I, Mma8451, mode::Active>,
 ) -> f32 {
-    let data = accel.read().expect("Failed to read accelerometer data");
+    let data = accel.read().expect("Failed to read accelerometer data"); //ToDo pass this error out and handle in Status
     let x = data.y;
     let y = data.x;
     let z = data.z;
