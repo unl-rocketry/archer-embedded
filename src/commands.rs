@@ -10,11 +10,11 @@ use alloc::sync::Arc;
 use core::cell::RefCell;
 use core::iter::Peekable;
 use core::str::SplitWhitespace;
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::rwlock::RwLock;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use embedded_hal_bus::i2c::RefCellDevice;
 use embedded_hal_bus::spi::NoDelay;
 use esp_hal::i2c;
@@ -126,40 +126,11 @@ pub async fn control_loop(
     }
 
     let mut position_clock = Timer::after(Duration::from_millis(200));
-    let mut timer = Instant::now();
+    let mut timeout_clock = Timer::after(Duration::from_millis(100));
 
     loop {
-        if timer.elapsed() > Duration::from_millis(100) {
-            while motor_horizontal.reset_command_timeout().is_err() {
-                error!("Horizontal motor communication failure, attempting reconnection");
-                motor_horizontal = TicI2C::new_with_address(
-                    RefCellDevice::new(&i2c_bus),
-                    TicProduct::Tic36v4,
-                    NoDelay,
-                    14,
-                );
-
-                let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
-                Timer::after(Duration::from_secs(1)).await;
-            }
-
-            while motor_vertical.reset_command_timeout().is_err() {
-                error!("Vertical motor communication failure, attempting reconnection");
-                motor_vertical = TicI2C::new_with_address(
-                    RefCellDevice::new(&i2c_bus),
-                    TicProduct::Tic36v4,
-                    NoDelay,
-                    15,
-                );
-
-                let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
-                Timer::after(Duration::from_secs(1)).await;
-            }
-
-            timer = Instant::now();
-        }
-        match select(command_channel.receive(), &mut position_clock).await {
-            Either::First(cmd) => {
+        match select3(command_channel.receive(), &mut position_clock, &mut timeout_clock).await {
+            Either3::First(cmd) => {
                 if !e_stop_channel.is_empty() {
                     match motor_vertical.halt_and_hold() {
                         Ok(_) => {}
@@ -321,7 +292,7 @@ pub async fn control_loop(
                     }
                 }
             }
-            Either::Second(()) => {
+            Either3::Second(()) => {
                 if let (Ok(pos_v), Ok(pos_h)) = (
                     motor_vertical.current_position(),
                     motor_horizontal.current_position(),
@@ -337,6 +308,35 @@ pub async fn control_loop(
                 }
 
                 position_clock = Timer::after(Duration::from_millis(200));
+            }
+            Either3::Third(()) => {
+                while motor_horizontal.reset_command_timeout().is_err() {
+                    error!("Horizontal motor communication failure, attempting reconnection");
+                    motor_horizontal = TicI2C::new_with_address(
+                        RefCellDevice::new(&i2c_bus),
+                        TicProduct::Tic36v4,
+                        NoDelay,
+                        14,
+                    );
+
+                    let _ = setup_motor(&mut motor_horizontal, MotorAxis::Horizontal);
+                    Timer::after(Duration::from_secs(1)).await;
+                }
+
+                while motor_vertical.reset_command_timeout().is_err() {
+                    error!("Vertical motor communication failure, attempting reconnection");
+                    motor_vertical = TicI2C::new_with_address(
+                        RefCellDevice::new(&i2c_bus),
+                        TicProduct::Tic36v4,
+                        NoDelay,
+                        15,
+                    );
+
+                    let _ = setup_motor(&mut motor_vertical, MotorAxis::Vertical);
+                    Timer::after(Duration::from_secs(1)).await;
+                }
+
+                timeout_clock = Timer::after(Duration::from_millis(100));
             }
         }
     }
